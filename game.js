@@ -1,0 +1,1076 @@
+// ======================================
+// برا السالفة — Game Engine
+// ======================================
+
+// ===== Game State =====
+const GameState = {
+    // Settings
+    mode: 'classic', // classic, questions, quick
+    category: 'random',
+    turnTime: 15,
+    totalRounds: 3,
+    currentRound: 1,
+    soundEnabled: true,
+    vibrationEnabled: true,
+
+    // Players
+    playerCount: 4,
+    players: [], // { name, score, isSpy, hint, voted }
+    currentPlayerIndex: 0,
+    spyIndex: -1,
+
+    // Game Data
+    currentWord: '',
+    hints: [],
+    votes: {},
+    votingComplete: false,
+    allPlayersRevealed: false,
+
+    // Timer
+    timerInterval: null,
+    timeRemaining: 15,
+
+    // Phase: setup, reveal, hints, voting, results
+    phase: 'setup',
+
+    // Custom words
+    customWords: JSON.parse(localStorage.getItem('customWords') || '[]'),
+
+    // Leaderboard
+    leaderboard: JSON.parse(localStorage.getItem('leaderboard') || '{}'),
+};
+
+// ===== Audio System (Musical & Fun) =====
+const AudioSystem = {
+    ctx: null,
+
+    init() {
+        if (!this.ctx) {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+    },
+
+    // Helper: create a note with smooth envelope
+    _note(freq, type, startTime, duration, volume = 0.12) {
+        const ctx = this.ctx;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        // Smooth ADSR
+        const attack = 0.02;
+        const release = duration * 0.3;
+        gain.gain.setValueAtTime(0, startTime);
+        gain.gain.linearRampToValueAtTime(volume, startTime + attack);
+        gain.gain.setValueAtTime(volume, startTime + duration - release);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+        osc.start(startTime);
+        osc.stop(startTime + duration);
+    },
+
+    // Helper: play a chord (multiple notes together)
+    _chord(freqs, type, startTime, duration, volume = 0.07) {
+        freqs.forEach(f => this._note(f, type, startTime, duration, volume));
+    },
+
+    play(type) {
+        if (!GameState.soundEnabled) return;
+        this.init();
+        const t = this.ctx.currentTime;
+
+        switch (type) {
+            case 'click': {
+                // Soft pop — xylophone-like tap
+                this._note(1200, 'sine', t, 0.08, 0.1);
+                this._note(1800, 'sine', t, 0.05, 0.05);
+                break;
+            }
+            case 'start': {
+                // Cheerful ascending fanfare melody (C-E-G-C5)
+                const melody = [
+                    { f: 523, d: 0.15 },  // C5
+                    { f: 659, d: 0.15 },  // E5
+                    { f: 784, d: 0.15 },  // G5
+                    { f: 1047, d: 0.35 }, // C6 (long)
+                ];
+                let offset = 0;
+                melody.forEach(n => {
+                    this._note(n.f, 'sine', t + offset, n.d, 0.13);
+                    this._note(n.f * 0.5, 'triangle', t + offset, n.d, 0.05); // octave below
+                    offset += n.d * 0.85;
+                });
+                // Final sparkle chord
+                this._chord([1047, 1318, 1568], 'sine', t + offset, 0.4, 0.06);
+                break;
+            }
+            case 'reveal': {
+                // Mysterious reveal — ascending shimmer + gentle chime
+                this._note(392, 'sine', t, 0.2, 0.1);        // G4
+                this._note(523, 'triangle', t + 0.1, 0.2, 0.08); // C5
+                this._note(659, 'sine', t + 0.2, 0.25, 0.12);   // E5
+                // Sparkle on top
+                this._note(1318, 'sine', t + 0.3, 0.15, 0.06);
+                this._note(1568, 'sine', t + 0.35, 0.2, 0.05);
+                break;
+            }
+            case 'spy_reveal': {
+                // Dramatic spy reveal — suspenseful descending
+                this._note(600, 'sine', t, 0.15, 0.12);
+                this._note(550, 'sine', t + 0.15, 0.15, 0.1);
+                this._note(400, 'triangle', t + 0.3, 0.3, 0.14);
+                this._note(200, 'sine', t + 0.45, 0.4, 0.08);
+                // Eerie shimmer
+                this._note(300, 'sine', t + 0.6, 0.5, 0.04);
+                this._note(303, 'sine', t + 0.6, 0.5, 0.04); // slight detune for mystery
+                break;
+            }
+            case 'vote': {
+                // Satisfying stamp/pop
+                this._note(880, 'sine', t, 0.06, 0.12);
+                this._note(1100, 'sine', t + 0.03, 0.08, 0.08);
+                this._note(660, 'triangle', t + 0.05, 0.1, 0.06);
+                break;
+            }
+            case 'win': {
+                // Joyful victory fanfare — major chord arpeggiated up + celebration
+                const winMelody = [
+                    { f: 523, d: 0.12 },   // C5
+                    { f: 659, d: 0.12 },   // E5
+                    { f: 784, d: 0.12 },   // G5
+                    { f: 1047, d: 0.2 },   // C6
+                    { f: 1175, d: 0.12 },  // D6
+                    { f: 1318, d: 0.12 },  // E6
+                    { f: 1568, d: 0.4 },   // G6 (sustained)
+                ];
+                let off = 0;
+                winMelody.forEach((n, i) => {
+                    this._note(n.f, 'sine', t + off, n.d, 0.11);
+                    if (i >= 3) this._note(n.f * 0.5, 'triangle', t + off, n.d, 0.04);
+                    off += n.d * 0.75;
+                });
+                // Final triumph chord
+                this._chord([1047, 1318, 1568], 'sine', t + off, 0.5, 0.07);
+                this._chord([523, 784, 1047], 'triangle', t + off, 0.6, 0.04);
+                break;
+            }
+            case 'lose': {
+                // Sad trombone — descending "wah wah wah wahhh"
+                const loseMelody = [
+                    { f: 493, d: 0.25 },  // B4
+                    { f: 466, d: 0.25 },  // Bb4
+                    { f: 440, d: 0.25 },  // A4
+                    { f: 349, d: 0.6 },   // F4 (long sad note)
+                ];
+                let lOff = 0;
+                loseMelody.forEach(n => {
+                    this._note(n.f, 'triangle', t + lOff, n.d, 0.1);
+                    this._note(n.f * 0.5, 'sine', t + lOff, n.d, 0.05);
+                    lOff += n.d * 0.9;
+                });
+                break;
+            }
+            case 'tick': {
+                // Gentle clock tick — soft woodblock
+                this._note(1600, 'sine', t, 0.03, 0.06);
+                this._note(800, 'triangle', t, 0.04, 0.04);
+                break;
+            }
+            case 'tick_urgent': {
+                // Urgent tick — slightly louder, higher pitch
+                this._note(2000, 'sine', t, 0.04, 0.09);
+                this._note(1000, 'square', t, 0.03, 0.03);
+                break;
+            }
+            case 'timeout': {
+                // Time's up — descending alarm with gentle buzz
+                this._note(880, 'sine', t, 0.12, 0.12);
+                this._note(660, 'sine', t + 0.12, 0.12, 0.1);
+                this._note(440, 'triangle', t + 0.24, 0.2, 0.12);
+                // Double buzz
+                this._note(440, 'sine', t + 0.5, 0.1, 0.08);
+                this._note(440, 'sine', t + 0.65, 0.1, 0.08);
+                break;
+            }
+            case 'pass': {
+                // Phone pass — swoosh whoosh
+                this._note(400, 'sine', t, 0.15, 0.08);
+                this._note(800, 'sine', t + 0.05, 0.15, 0.06);
+                this._note(1200, 'sine', t + 0.1, 0.1, 0.04);
+                break;
+            }
+            case 'hint': {
+                // Hint submitted — bubbly confirmation
+                this._note(880, 'sine', t, 0.1, 0.1);
+                this._note(1100, 'sine', t + 0.08, 0.12, 0.08);
+                this._note(1320, 'sine', t + 0.16, 0.15, 0.07);
+                break;
+            }
+            case 'countdown': {
+                // Countdown beep (3, 2, 1)
+                this._note(600, 'sine', t, 0.1, 0.1);
+                this._note(300, 'triangle', t, 0.1, 0.05);
+                break;
+            }
+            case 'round_start': {
+                // New round — upbeat jingle
+                const jingle = [523, 587, 659, 784, 880, 1047];
+                jingle.forEach((f, i) => {
+                    this._note(f, 'sine', t + i * 0.08, 0.12, 0.09);
+                });
+                this._chord([1047, 1318, 1568], 'sine', t + jingle.length * 0.08, 0.3, 0.05);
+                break;
+            }
+            case 'join': {
+                // Player joined — friendly ding-dong
+                this._note(784, 'sine', t, 0.15, 0.1);
+                this._note(1047, 'sine', t + 0.15, 0.2, 0.1);
+                break;
+            }
+            case 'error': {
+                // Error — short buzz
+                this._note(200, 'triangle', t, 0.15, 0.08);
+                this._note(180, 'triangle', t + 0.15, 0.15, 0.06);
+                break;
+            }
+        }
+    },
+
+    vibrate(pattern) {
+        if (GameState.vibrationEnabled && navigator.vibrate) {
+            navigator.vibrate(pattern);
+        }
+    }
+};
+
+// ===== Screen Management =====
+function showScreen(screenId) {
+    AudioSystem.play('click');
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    const screen = document.getElementById(screenId);
+    if (screen) screen.classList.add('active');
+}
+
+// ===== Splash Screen =====
+window.addEventListener('DOMContentLoaded', () => {
+    initSetupScreen();
+    generateRoomCode();
+    initCodeInputs();
+    loadCustomWords();
+
+    // Splash screen timeout
+    setTimeout(() => {
+        showScreen('main-menu');
+        // Initialize online connection
+        if (typeof OnlineGame !== 'undefined') {
+            OnlineGame.connect();
+        }
+    }, 3000);
+});
+
+// ===== Setup Screen Initialization =====
+function initSetupScreen() {
+    updatePlayerInputs();
+    renderCategories();
+}
+
+function updatePlayerInputs() {
+    const container = document.getElementById('player-names-container');
+    container.innerHTML = '';
+    for (let i = 0; i < GameState.playerCount; i++) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'player-name-input';
+        input.placeholder = `اسم اللاعب ${i + 1}`;
+        input.id = `player-${i}`;
+        input.value = GameState.players[i]?.name || '';
+        input.maxLength = 20;
+        container.appendChild(input);
+    }
+    document.getElementById('player-count-display').textContent = GameState.playerCount;
+}
+
+function changePlayerCount(delta) {
+    AudioSystem.play('click');
+    const newCount = GameState.playerCount + delta;
+    if (newCount >= 3 && newCount <= 12) {
+        GameState.playerCount = newCount;
+        updatePlayerInputs();
+    }
+}
+
+function renderCategories() {
+    const grid = document.getElementById('category-grid');
+    grid.innerHTML = '';
+    CATEGORIES.forEach(cat => {
+        const btn = document.createElement('button');
+        btn.className = `category-btn${GameState.category === cat.id ? ' active' : ''}`;
+        btn.innerHTML = `
+            <span class="category-emoji">${cat.emoji}</span>
+            <span class="category-name">${cat.name}</span>
+        `;
+        btn.addEventListener('click', () => selectCategory(cat.id));
+        grid.appendChild(btn);
+    });
+}
+
+function selectCategory(catId) {
+    AudioSystem.play('click');
+    GameState.category = catId;
+    document.querySelectorAll('.category-btn').forEach(btn => btn.classList.remove('active'));
+    event.currentTarget.classList.add('active');
+}
+
+function selectMode(mode) {
+    AudioSystem.play('click');
+    GameState.mode = mode;
+    document.querySelectorAll('.mode-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`[data-mode="${mode}"]`).classList.add('active');
+
+    // Quick mode auto-sets timer to 30s
+    if (mode === 'quick') {
+        selectTimer(30);
+    }
+}
+
+function selectTimer(time) {
+    AudioSystem.play('click');
+    GameState.turnTime = time;
+    document.querySelectorAll('.timer-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`.timer-btn[data-time="${time}"]`)?.classList.add('active');
+}
+
+function selectRounds(rounds) {
+    AudioSystem.play('click');
+    GameState.totalRounds = rounds;
+    document.querySelectorAll('.round-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelector(`.round-btn[data-rounds="${rounds}"]`)?.classList.add('active');
+}
+
+// ===== Quick Play =====
+function startQuickPlay() {
+    AudioSystem.play('start');
+    // Default 4 players, random category, classic mode
+    GameState.playerCount = 4;
+    GameState.mode = 'classic';
+    GameState.category = 'random';
+    GameState.turnTime = 15;
+    GameState.totalRounds = 3;
+    GameState.currentRound = 1;
+    showScreen('setup-screen');
+}
+
+// ===== Start Game =====
+function startGame() {
+    // Validate player names
+    const players = [];
+    for (let i = 0; i < GameState.playerCount; i++) {
+        const input = document.getElementById(`player-${i}`);
+        const name = input?.value.trim() || `لاعب ${i + 1}`;
+        players.push({
+            name,
+            score: GameState.leaderboard[name] || 0,
+            isSpy: false,
+            hint: '',
+            voted: null,
+            avatar: AVATARS[i % AVATARS.length]
+        });
+    }
+
+    GameState.players = players;
+    GameState.currentPlayerIndex = 0;
+    GameState.hints = [];
+    GameState.votes = {};
+    GameState.votingComplete = false;
+    GameState.allPlayersRevealed = false;
+
+    // Choose random word
+    chooseWord();
+
+    // Choose spy
+    GameState.spyIndex = Math.floor(Math.random() * GameState.playerCount);
+    GameState.players[GameState.spyIndex].isSpy = true;
+
+    AudioSystem.play('round_start');
+    AudioSystem.vibrate([100, 50, 100]);
+
+    // Start player reveal phase
+    GameState.phase = 'reveal';
+    showPassPhone(0);
+}
+
+function chooseWord() {
+    let wordPool = [];
+
+    if (GameState.category === 'random') {
+        // Mix all categories
+        Object.values(WORDS).forEach(words => {
+            wordPool = wordPool.concat(words);
+        });
+    } else {
+        wordPool = WORDS[GameState.category] || [];
+    }
+
+    // Add custom words
+    if (GameState.customWords.length > 0) {
+        wordPool = wordPool.concat(GameState.customWords);
+    }
+
+    GameState.currentWord = wordPool[Math.floor(Math.random() * wordPool.length)];
+}
+
+// ===== Pass Phone Phase =====
+function showPassPhone(playerIndex) {
+    GameState.currentPlayerIndex = playerIndex;
+    const player = GameState.players[playerIndex];
+
+    document.getElementById('pass-player-name').textContent = player.name;
+    AudioSystem.play('pass');
+    showScreen('pass-phone-screen');
+}
+
+function showRole() {
+    const player = GameState.players[GameState.currentPlayerIndex];
+    AudioSystem.play(player.isSpy ? 'spy_reveal' : 'reveal');
+    AudioSystem.vibrate(player.isSpy ? [100, 50, 100, 50, 200] : [50]);
+
+    const roleCard = document.getElementById('role-card');
+    const roleIcon = document.getElementById('role-icon');
+    const roleTitle = document.getElementById('role-title');
+    const roleWord = document.getElementById('role-word');
+    const roleHint = document.getElementById('role-hint');
+
+    roleCard.classList.remove('spy');
+
+    if (player.isSpy) {
+        roleCard.classList.add('spy');
+        roleIcon.textContent = '🕵️';
+        roleTitle.textContent = 'أنت المخفي! 🤫';
+        roleWord.textContent = '؟؟؟';
+        roleHint.textContent = 'حاول معرفة الكلمة من تلميحات الآخرين دون أن يُكشف أمرك!';
+    } else {
+        roleIcon.textContent = '🎯';
+        roleTitle.textContent = 'أنت تعرف الكلمة!';
+        roleWord.textContent = GameState.currentWord;
+        roleHint.textContent = 'قدّم تلميحاً ذكياً دون فضح الكلمة!';
+    }
+
+    // Start timer display
+    GameState.timeRemaining = GameState.turnTime;
+    updateTimerDisplay();
+
+    showScreen('role-screen');
+}
+
+function updateTimerDisplay() {
+    const text = document.getElementById('timer-text');
+    const progress = document.getElementById('timer-progress');
+    const circumference = 2 * Math.PI * 54; // r=54 from SVG
+
+    text.textContent = GameState.timeRemaining;
+
+    const ratio = GameState.timeRemaining / GameState.turnTime;
+    progress.style.strokeDasharray = circumference;
+    progress.style.strokeDashoffset = circumference * (1 - ratio);
+
+    // Color changes
+    progress.classList.remove('warning', 'danger');
+    if (ratio <= 0.3) {
+        progress.classList.add('danger');
+    } else if (ratio <= 0.5) {
+        progress.classList.add('warning');
+    }
+}
+
+function nextPlayer() {
+    AudioSystem.play('click');
+    const nextIndex = GameState.currentPlayerIndex + 1;
+
+    if (nextIndex < GameState.playerCount) {
+        showPassPhone(nextIndex);
+    } else {
+        // All players have seen their roles, move to hints/questions phase
+        GameState.allPlayersRevealed = true;
+        startHintPhase();
+    }
+}
+
+// ===== Hint/Question Phase =====
+function startHintPhase() {
+    GameState.phase = 'hints';
+    GameState.currentPlayerIndex = 0;
+    GameState.hints = [];
+
+    const title = document.getElementById('hint-screen-title');
+    const instruction = document.getElementById('hint-instruction');
+
+    if (GameState.mode === 'questions') {
+        title.textContent = 'دور الأسئلة ❓';
+        instruction.textContent = 'حان دورك لطرح سؤال!';
+    } else {
+        title.textContent = 'دور التلميحات 💡';
+        instruction.textContent = 'حان دورك لتقديم تلميح!';
+    }
+
+    document.getElementById('hints-list').innerHTML = '';
+    showCurrentHintPlayer();
+}
+
+function showCurrentHintPlayer() {
+    const player = GameState.players[GameState.currentPlayerIndex];
+    document.getElementById('current-hint-player').textContent = `${player.avatar} ${player.name}`;
+    document.getElementById('hint-input').value = '';
+    document.getElementById('hint-input').placeholder =
+        GameState.mode === 'questions' ? 'اكتب سؤالك هنا...' : 'اكتب تلميحك هنا...';
+
+    // For questions mode, auto-fill a random question for non-spy players
+    if (GameState.mode === 'questions' && !player.isSpy) {
+        const randomQ = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
+        document.getElementById('hint-input').placeholder = randomQ;
+    }
+
+    showScreen('hint-screen');
+    document.getElementById('hint-input').focus();
+
+    // Start turn timer
+    startTurnTimer();
+}
+
+function startTurnTimer() {
+    clearInterval(GameState.timerInterval);
+    GameState.timeRemaining = GameState.turnTime;
+
+    GameState.timerInterval = setInterval(() => {
+        GameState.timeRemaining--;
+
+        if (GameState.timeRemaining <= 3 && GameState.timeRemaining > 0) {
+            AudioSystem.play('tick_urgent');
+        } else if (GameState.timeRemaining <= 5) {
+            AudioSystem.play('tick');
+        }
+
+        if (GameState.timeRemaining <= 0) {
+            clearInterval(GameState.timerInterval);
+            AudioSystem.play('timeout');
+            AudioSystem.vibrate([200, 100, 200]);
+            // Auto-submit empty hint
+            autoSubmitHint();
+        }
+    }, 1000);
+}
+
+function autoSubmitHint() {
+    const input = document.getElementById('hint-input');
+    if (!input.value.trim()) {
+        input.value = GameState.mode === 'questions' ? 'لم يسأل' : 'لم يلمّح';
+    }
+    submitHint();
+}
+
+function submitHint() {
+    clearInterval(GameState.timerInterval);
+    AudioSystem.play('hint');
+
+    const input = document.getElementById('hint-input');
+    const hintText = input.value.trim() || (GameState.mode === 'questions' ? 'لم يسأل' : 'لم يلمّح');
+    const player = GameState.players[GameState.currentPlayerIndex];
+
+    GameState.hints.push({
+        playerName: player.name,
+        avatar: player.avatar,
+        text: hintText
+    });
+
+    // Add to hints list display
+    const hintsList = document.getElementById('hints-list');
+    const hintItem = document.createElement('div');
+    hintItem.className = 'hint-item';
+    hintItem.innerHTML = `
+        <span class="hint-player">${player.avatar} ${player.name}</span>
+        <span class="hint-text">${hintText}</span>
+    `;
+    hintsList.appendChild(hintItem);
+
+    // Next player
+    GameState.currentPlayerIndex++;
+
+    if (GameState.currentPlayerIndex < GameState.playerCount) {
+        showCurrentHintPlayer();
+    } else {
+        // All hints given, move to voting
+        startVotingPhase();
+    }
+}
+
+// ===== Voting Phase =====
+function startVotingPhase() {
+    GameState.phase = 'voting';
+    GameState.votes = {};
+    GameState.votingComplete = false;
+
+    const votingPlayers = document.getElementById('voting-players');
+    votingPlayers.innerHTML = '';
+
+    // Show all hints first
+    let hintsHTML = '<div class="hints-review"><h3 style="text-align:center;margin-bottom:16px;">التلميحات 💡</h3>';
+    GameState.hints.forEach(hint => {
+        hintsHTML += `
+            <div class="hint-item">
+                <span class="hint-player">${hint.avatar} ${hint.playerName}</span>
+                <span class="hint-text">${hint.text}</span>
+            </div>
+        `;
+    });
+    hintsHTML += '</div><div style="margin:24px 0;text-align:center;"><h3>صوّت الآن! من هو المخفي؟ 🕵️</h3></div>';
+
+    votingPlayers.innerHTML = hintsHTML;
+
+    // Add vote buttons for each player
+    GameState.players.forEach((player, index) => {
+        const btn = document.createElement('button');
+        btn.className = 'vote-btn';
+        btn.innerHTML = `
+            <span class="vote-avatar">${player.avatar}</span>
+            <span>${player.name}</span>
+            <span class="vote-count">0 أصوات</span>
+        `;
+        btn.addEventListener('click', () => castVote(index, btn));
+        votingPlayers.appendChild(btn);
+    });
+
+    document.getElementById('spy-guess-section').classList.add('hidden');
+    showScreen('voting-screen');
+}
+
+let currentVotingPlayer = 0;
+
+function castVote(votedForIndex, btn) {
+    if (GameState.votingComplete) return;
+
+    AudioSystem.play('vote');
+    AudioSystem.vibrate([30]);
+
+    // Record vote
+    if (!GameState.votes[votedForIndex]) {
+        GameState.votes[votedForIndex] = 0;
+    }
+    GameState.votes[votedForIndex]++;
+
+    // Visual feedback
+    btn.classList.add('selected');
+    setTimeout(() => btn.classList.remove('selected'), 300);
+
+    currentVotingPlayer++;
+
+    if (currentVotingPlayer >= GameState.playerCount) {
+        // All votes cast
+        GameState.votingComplete = true;
+        revealVotes();
+    } else {
+        showToast(`✅ تم التصويت! (${currentVotingPlayer}/${GameState.playerCount})`);
+    }
+}
+
+function revealVotes() {
+    // Show vote counts
+    const voteBtns = document.querySelectorAll('.vote-btn');
+    voteBtns.forEach((btn, index) => {
+        const count = GameState.votes[index] || 0;
+        btn.querySelector('.vote-count').textContent = `${count} أصوات`;
+        btn.classList.add('revealed');
+        // Disable further voting
+        btn.style.pointerEvents = 'none';
+    });
+
+    // Find most voted player
+    let maxVotes = 0;
+    let mostVotedIndex = -1;
+    Object.entries(GameState.votes).forEach(([index, count]) => {
+        if (count > maxVotes) {
+            maxVotes = count;
+            mostVotedIndex = parseInt(index);
+        }
+    });
+
+    // Check if spy was caught
+    const spyCaught = mostVotedIndex === GameState.spyIndex;
+
+    if (spyCaught) {
+        // Give spy a chance to guess the word
+        setTimeout(() => {
+            document.getElementById('spy-guess-section').classList.remove('hidden');
+            document.getElementById('spy-guess-input').value = '';
+            document.getElementById('spy-guess-input').focus();
+        }, 1500);
+    } else {
+        // Spy wins - wasn't caught
+        setTimeout(() => showResults(false, false), 2000);
+    }
+}
+
+function submitSpyGuess() {
+    const guess = document.getElementById('spy-guess-input').value.trim();
+    const correct = guess === GameState.currentWord;
+
+    AudioSystem.play(correct ? 'win' : 'lose');
+    showResults(true, correct);
+}
+
+// ===== Results Phase =====
+function showResults(spyCaught, spyGuessedCorrectly) {
+    GameState.phase = 'results';
+
+    const resultIcon = document.getElementById('result-icon');
+    const resultTitle = document.getElementById('result-title');
+    const spyName = document.getElementById('spy-name');
+    const resultWordText = document.getElementById('result-word-text');
+
+    spyName.textContent = GameState.players[GameState.spyIndex].name;
+    resultWordText.textContent = GameState.currentWord;
+
+    // Calculate scores
+    if (spyCaught && !spyGuessedCorrectly) {
+        // Others win
+        resultIcon.textContent = '🎉';
+        resultTitle.textContent = 'تم كشف المخفي!';
+        resultTitle.classList.remove('spy-wins');
+        AudioSystem.play('win');
+
+        GameState.players.forEach((player, i) => {
+            if (i !== GameState.spyIndex) {
+                player.score += 2;
+            }
+        });
+    } else if (spyCaught && spyGuessedCorrectly) {
+        // Spy guessed the word even after being caught
+        resultIcon.textContent = '😱';
+        resultTitle.textContent = 'المخفي عرف الكلمة!';
+        resultTitle.classList.add('spy-wins');
+        AudioSystem.play('lose');
+
+        GameState.players[GameState.spyIndex].score += 3;
+    } else {
+        // Spy wasn't caught
+        resultIcon.textContent = '🕵️';
+        resultTitle.textContent = 'المخفي نجا! 😈';
+        resultTitle.classList.add('spy-wins');
+        AudioSystem.play('lose');
+
+        GameState.players[GameState.spyIndex].score += 3;
+    }
+
+    // Update leaderboard
+    GameState.players.forEach(p => {
+        GameState.leaderboard[p.name] = p.score;
+    });
+    localStorage.setItem('leaderboard', JSON.stringify(GameState.leaderboard));
+
+    // Display scores
+    renderScores();
+
+    // Show/hide next round button
+    const nextRndBtn = document.getElementById('btn-next-round');
+    if (GameState.currentRound >= GameState.totalRounds) {
+        nextRndBtn.querySelector('.btn-text').textContent = 'النتائج النهائية 🏆';
+    } else {
+        nextRndBtn.querySelector('.btn-text').textContent = `الجولة ${GameState.currentRound + 1} 🔄`;
+    }
+
+    // confetti if winners
+    if (spyCaught && !spyGuessedCorrectly) {
+        launchConfetti();
+    }
+
+    AudioSystem.vibrate([100, 50, 100, 50, 200]);
+    showScreen('results-screen');
+}
+
+function renderScores() {
+    const scoresList = document.getElementById('scores-list');
+    scoresList.innerHTML = '';
+
+    const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
+    sorted.forEach((player, i) => {
+        const item = document.createElement('div');
+        item.className = 'score-item';
+        item.style.animationDelay = `${i * 0.1}s`;
+
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        const spyBadge = player.isSpy ? ' 🕵️' : '';
+
+        item.innerHTML = `
+            <span style="font-size:1.3rem;min-width:30px;text-align:center;">${medal}</span>
+            <span class="score-name">${player.avatar} ${player.name}${spyBadge}</span>
+            <span class="score-points">${player.score}</span>
+        `;
+        scoresList.appendChild(item);
+    });
+}
+
+// ===== Next Round / End Game =====
+function nextRound() {
+    AudioSystem.play('click');
+
+    if (GameState.currentRound >= GameState.totalRounds) {
+        // Show final leaderboard
+        renderLeaderboard();
+        showScreen('leaderboard-screen');
+        return;
+    }
+
+    GameState.currentRound++;
+
+    // Reset for new round
+    GameState.players.forEach(p => {
+        p.isSpy = false;
+        p.hint = '';
+        p.voted = null;
+    });
+
+    GameState.currentPlayerIndex = 0;
+    GameState.hints = [];
+    GameState.votes = {};
+    GameState.votingComplete = false;
+    GameState.allPlayersRevealed = false;
+    currentVotingPlayer = 0;
+
+    // New word and spy
+    chooseWord();
+    GameState.spyIndex = Math.floor(Math.random() * GameState.playerCount);
+    GameState.players[GameState.spyIndex].isSpy = true;
+
+    GameState.phase = 'reveal';
+    showPassPhone(0);
+}
+
+function backToMenu() {
+    AudioSystem.play('click');
+    clearInterval(GameState.timerInterval);
+    GameState.currentRound = 1;
+    currentVotingPlayer = 0;
+    showScreen('main-menu');
+}
+
+// ===== Leaderboard =====
+function renderLeaderboard() {
+    const podium = document.getElementById('leaderboard-podium');
+    const list = document.getElementById('leaderboard-list');
+
+    const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
+
+    // Podium (top 3)
+    podium.innerHTML = '';
+    const podiumOrder = [1, 0, 2]; // Silver, Gold, Bronze display order
+
+    podiumOrder.forEach(rank => {
+        if (sorted[rank]) {
+            const player = sorted[rank];
+            const heights = [120, 90, 60];
+            const medals = ['🥇', '🥈', '🥉'];
+
+            const item = document.createElement('div');
+            item.className = 'podium-item';
+            item.innerHTML = `
+                <span class="podium-avatar" style="font-size:2.5rem;">${player.avatar}</span>
+                <span class="podium-name">${player.name}</span>
+                <span class="podium-score">${player.score} نقطة</span>
+                <div class="podium-bar" style="height:${heights[rank]}px">${medals[rank]}</div>
+            `;
+            podium.appendChild(item);
+        }
+    });
+
+    // Full list
+    list.innerHTML = '';
+    sorted.forEach((player, i) => {
+        const item = document.createElement('div');
+        item.className = 'leaderboard-item';
+        item.innerHTML = `
+            <span class="leaderboard-rank">${i + 1}</span>
+            <span style="font-size:1.3rem;">${player.avatar}</span>
+            <span class="leaderboard-name">${player.name}</span>
+            <span class="leaderboard-points">${player.score} نقطة</span>
+        `;
+        list.appendChild(item);
+    });
+
+    // Confetti for winner
+    launchConfetti();
+}
+
+// ===== Room System =====
+function generateRoomCode() {
+    const code = Math.floor(10000 + Math.random() * 90000).toString();
+    document.getElementById('room-code').textContent = code;
+}
+
+function copyRoomCode() {
+    const code = document.getElementById('room-code').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+        showToast('📋 تم نسخ الرمز!');
+    }).catch(() => {
+        showToast('📋 الرمز: ' + code);
+    });
+}
+
+// ===== Code Input System =====
+function initCodeInputs() {
+    const inputs = document.querySelectorAll('.code-input');
+    inputs.forEach((input, i) => {
+        input.addEventListener('input', (e) => {
+            if (e.target.value && i < inputs.length - 1) {
+                inputs[i + 1].focus();
+            }
+        });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !e.target.value && i > 0) {
+                inputs[i - 1].focus();
+            }
+        });
+    });
+}
+
+// ===== Settings =====
+function toggleSound() {
+    GameState.soundEnabled = document.getElementById('sound-toggle').checked;
+    if (GameState.soundEnabled) AudioSystem.play('click');
+}
+
+function toggleDarkMode() {
+    // Currently only dark mode, but can expand
+    const enabled = document.getElementById('dark-mode-toggle').checked;
+    if (!enabled) {
+        document.body.style.background = 'linear-gradient(135deg, #f0f0f5 0%, #e0e0e8 100%)';
+        showToast('🌞 الوضع الفاتح (تجريبي)');
+    } else {
+        document.body.style.background = '';
+        showToast('🌙 الوضع الداكن');
+    }
+}
+
+function toggleVibration() {
+    GameState.vibrationEnabled = document.getElementById('vibration-toggle').checked;
+}
+
+function resetScores() {
+    if (confirm('هل أنت متأكد من مسح جميع النقاط؟')) {
+        GameState.leaderboard = {};
+        localStorage.removeItem('leaderboard');
+        GameState.players.forEach(p => p.score = 0);
+        showToast('🗑️ تم مسح النقاط');
+    }
+}
+
+// ===== Custom Words =====
+function loadCustomWords() {
+    renderCustomWords();
+}
+
+function addCustomWord() {
+    const input = document.getElementById('custom-word-input');
+    const word = input.value.trim();
+    if (word && !GameState.customWords.includes(word)) {
+        GameState.customWords.push(word);
+        localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
+        input.value = '';
+        renderCustomWords();
+        AudioSystem.play('click');
+        showToast(`✅ تمت إضافة "${word}"`);
+    }
+}
+
+function removeCustomWord(word) {
+    GameState.customWords = GameState.customWords.filter(w => w !== word);
+    localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
+    renderCustomWords();
+}
+
+function renderCustomWords() {
+    const list = document.getElementById('custom-words-list');
+    list.innerHTML = '';
+    GameState.customWords.forEach(word => {
+        const tag = document.createElement('div');
+        tag.className = 'custom-word-tag';
+        tag.innerHTML = `
+            <span>${word}</span>
+            <button onclick="removeCustomWord('${word}')">✕</button>
+        `;
+        list.appendChild(tag);
+    });
+}
+
+// ===== Utility Functions =====
+function showToast(message) {
+    let toast = document.querySelector('.toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.className = 'toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+}
+
+function launchConfetti() {
+    const container = document.createElement('div');
+    container.className = 'confetti-container';
+    document.body.appendChild(container);
+
+    const colors = ['#6C5CE7', '#FF6B6B', '#00D2D3', '#FECA57', '#55EFC4', '#FFA07A', '#A29BFE'];
+
+    for (let i = 0; i < 50; i++) {
+        const piece = document.createElement('div');
+        piece.className = 'confetti-piece';
+        piece.style.left = Math.random() * 100 + '%';
+        piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+        piece.style.animationDelay = Math.random() * 2 + 's';
+        piece.style.animationDuration = (2 + Math.random() * 2) + 's';
+
+        // Random shapes
+        if (Math.random() > 0.5) {
+            piece.style.borderRadius = '50%';
+        } else {
+            piece.style.width = '8px';
+            piece.style.height = '14px';
+        }
+
+        container.appendChild(piece);
+    }
+
+    setTimeout(() => container.remove(), 5000);
+}
+
+// ===== Keyboard shortcuts =====
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const activeScreen = document.querySelector('.screen.active');
+        if (activeScreen) {
+            if (activeScreen.id === 'hint-screen') {
+                submitHint();
+            } else if (activeScreen.id === 'pass-phone-screen') {
+                showRole();
+            }
+        }
+    }
+});
+
+// Prevent zoom on double tap (mobile)
+document.addEventListener('touchstart', (e) => {
+    if (e.touches.length > 1) {
+        e.preventDefault();
+    }
+}, { passive: false });
+
+let lastTouchEnd = 0;
+document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) {
+        e.preventDefault();
+    }
+    lastTouchEnd = now;
+}, false);
