@@ -17,6 +17,14 @@ const io = new Server(server, {
 // Serve static files
 app.use(express.static(path.join(__dirname)));
 
+// Root route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// Health check
+app.get('/health', (req, res) => res.send('OK'));
+
 // ===== Room Storage =====
 const rooms = new Map();
 
