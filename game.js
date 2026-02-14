@@ -5,7 +5,7 @@
 // ===== Game State =====
 const GameState = {
     // Settings
-    mode: 'classic', // classic, questions, quick
+    mode: 'questions', // questions is now default
     category: 'random',
     turnTime: 15,
     totalRounds: 3,
@@ -379,7 +379,7 @@ function startQuickPlay() {
     AudioSystem.play('start');
     // Default 4 players, random category, classic mode
     GameState.playerCount = 4;
-    GameState.mode = 'classic';
+    GameState.mode = 'questions';
     GameState.category = 'random';
     GameState.turnTime = 15;
     GameState.totalRounds = 3;

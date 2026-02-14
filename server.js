@@ -35,7 +35,7 @@ function createRoom(hostId, hostName) {
             isHost: true
         }],
         settings: {
-            mode: 'classic',
+            mode: 'questions',
             category: 'random',
             turnTime: 15,
             totalRounds: 3,

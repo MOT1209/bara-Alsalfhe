@@ -144,12 +144,12 @@
             <div class="setup-section">
                 <h3 class="section-title">وضع اللعب 🎮</h3>
                 <div class="mode-selector">
-                    <button class="mode-btn active" data-mode="classic" onclick="selectMode('classic')">
+                    <button class="mode-btn" data-mode="classic" onclick="selectMode('classic')">
                         <span class="mode-icon">🎯</span>
                         <span class="mode-name">كلاسيكي</span>
                         <span class="mode-desc">تلميحات وتخمين</span>
                     </button>
-                    <button class="mode-btn" data-mode="questions" onclick="selectMode('questions')">
+                    <button class="mode-btn active" data-mode="questions" onclick="selectMode('questions')">
                         <span class="mode-icon">❓</span>
                         <span class="mode-name">أسئلة</span>
                         <span class="mode-desc">أسئلة وأجوبة</span>
@@ -376,7 +376,7 @@
                         <span>الوضع:</span>
                         <select id="room-mode-select" onchange="OnlineGame.updateSettings()">
                             <option value="classic">🎯 كلاسيكي</option>
-                            <option value="questions">❓ أسئلة</option>
+                            <option value="questions" selected>❓ أسئلة</option>
                             <option value="quick">⚡ سريع</option>
                         </select>
                     </div>
