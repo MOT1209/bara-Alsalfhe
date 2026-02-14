@@ -38,6 +38,9 @@ const GameState = {
 
     // Leaderboard
     leaderboard: JSON.parse(localStorage.getItem('leaderboard') || '{}'),
+
+    // Session Stats (for awards)
+    sessionStats: {},
 };
 
 // ===== Audio System (Musical & Fun) =====
@@ -244,6 +247,26 @@ const AudioSystem = {
         if (GameState.vibrationEnabled && navigator.vibrate) {
             navigator.vibrate(pattern);
         }
+    },
+
+    // Text-to-Speech
+    speak(text) {
+        if (!GameState.soundEnabled || !window.speechSynthesis) return;
+        
+        // Cancel any current speech
+        window.speechSynthesis.cancel();
+
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = 'ar-SA'; // Arabic
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+
+        // Try to find a good Arabic voice
+        const voices = window.speechSynthesis.getVoices();
+        const arabicVoice = voices.find(v => v.lang.includes('ar'));
+        if (arabicVoice) utterance.voice = arabicVoice;
+
+        window.speechSynthesis.speak(utterance);
     }
 };
 
@@ -400,6 +423,34 @@ function startGame() {
 
     // Start player reveal phase
     GameState.phase = 'reveal';
+
+    // Initialize session stats if first round
+    if (GameState.currentRound === 1) {
+        GameState.sessionStats = {};
+        GameState.players.forEach(p => {
+            GameState.sessionStats[p.name] = {
+                votesReceivedAsInnocent: 0,
+                votesReceivedAsSpy: 0,
+                totalVotesReceived: 0,
+                timesSpy: 0,
+                spyWins: 0
+            };
+        });
+    } else {
+        // Ensure new players are added to stats if joined mid-game (though not possible in current UI flow)
+        GameState.players.forEach(p => {
+            if (!GameState.sessionStats[p.name]) {
+                GameState.sessionStats[p.name] = {
+                    votesReceivedAsInnocent: 0,
+                    votesReceivedAsSpy: 0,
+                    totalVotesReceived: 0,
+                    timesSpy: 0,
+                    spyWins: 0
+                };
+            }
+        });
+    }
+
     showPassPhone(0);
 }
 
@@ -543,6 +594,13 @@ function showCurrentHintPlayer() {
 
         instruction.textContent = question; // Show question as instruction
         input.placeholder = 'اكتب إجابتك هنا...';
+
+        // Speak the question
+        // Add a small delay for better UX
+        setTimeout(() => {
+            AudioSystem.speak(`يا ${player.name}.. ${question}`);
+        }, 600);
+
     } else {
         instruction.textContent = 'حان دورك لتقديم تلميح!';
         input.placeholder = 'اكتب تلميحك هنا...';
@@ -822,292 +880,407 @@ function showResults(spyCaught, spyGuessedCorrectly) {
         launchConfetti();
     }
 
+    // Update session stats for awards
+    updateSessionStats(spyCaught, spyGuessedCorrectly);
+
     AudioSystem.vibrate([100, 50, 100, 50, 200]);
     showScreen('results-screen');
 }
 
-function renderScores() {
-    const scoresList = document.getElementById('scores-list');
-    scoresList.innerHTML = '';
+function updateSessionStats(spyCaught, spyGuessedCorrectly) {
+    if (!GameState.sessionStats) GameState.sessionStats = {};
 
-    const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
-    sorted.forEach((player, i) => {
-        const item = document.createElement('div');
-        item.className = 'score-item';
-        item.style.animationDelay = `${i * 0.1}s`;
+    // Track votes
+    Object.entries(GameState.votes).forEach(([targetIndex, count]) => {
+        const target = GameState.players[targetIndex];
+        if (target && GameState.sessionStats[target.name]) {
+            GameState.sessionStats[target.name].totalVotesReceived += count;
+            if (target.isSpy) {
+                GameState.sessionStats[target.name].votesReceivedAsSpy += count;
+            } else {
+                GameState.sessionStats[target.name].votesReceivedAsInnocent += count;
+            }
+        }
+    });
 
-        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-        const spyBadge = player.isSpy ? ' 🕵️' : '';
+    // Track spy stats
+    const spy = GameState.players[GameState.spyIndex];
+    if (spy && GameState.sessionStats[spy.name]) {
+        GameState.sessionStats[spy.name].timesSpy++;
+        if (!spyCaught || spyGuessedCorrectly) {
+            GameState.sessionStats[spy.name].spyWins++;
+        }
+    }
 
-        item.innerHTML = `
+    function renderScores() {
+        const scoresList = document.getElementById('scores-list');
+        scoresList.innerHTML = '';
+
+        const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
+        sorted.forEach((player, i) => {
+            const item = document.createElement('div');
+            item.className = 'score-item';
+            item.style.animationDelay = `${i * 0.1}s`;
+
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+            const spyBadge = player.isSpy ? ' 🕵️' : '';
+
+            item.innerHTML = `
             <span style="font-size:1.3rem;min-width:30px;text-align:center;">${medal}</span>
             <span class="score-name">${player.avatar} ${player.name}${spyBadge}</span>
             <span class="score-points">${player.score}</span>
         `;
-        scoresList.appendChild(item);
-    });
-}
-
-// ===== Next Round / End Game =====
-function nextRound() {
-    AudioSystem.play('click');
-
-    if (GameState.currentRound >= GameState.totalRounds) {
-        // Show final leaderboard
-        renderLeaderboard();
-        showScreen('leaderboard-screen');
-        return;
+            scoresList.appendChild(item);
+        });
     }
 
-    GameState.currentRound++;
+    // ===== Next Round / End Game =====
+    function nextRound() {
+        AudioSystem.play('click');
 
-    // Reset for new round
-    GameState.players.forEach(p => {
-        p.isSpy = false;
-        p.hint = '';
-        p.voted = null;
-    });
+        if (GameState.currentRound >= GameState.totalRounds) {
+            // Show final leaderboard
+            renderLeaderboard();
+            showScreen('leaderboard-screen');
+            return;
+        }
 
-    GameState.currentPlayerIndex = 0;
-    GameState.hints = [];
-    GameState.votes = {};
-    GameState.votingComplete = false;
-    GameState.allPlayersRevealed = false;
-    currentVotingPlayer = 0;
+        GameState.currentRound++;
 
-    // New word and spy
-    chooseWord();
-    GameState.spyIndex = Math.floor(Math.random() * GameState.playerCount);
-    GameState.players[GameState.spyIndex].isSpy = true;
+        // Reset for new round
+        GameState.players.forEach(p => {
+            p.isSpy = false;
+            p.hint = '';
+            p.voted = null;
+        });
 
-    GameState.phase = 'reveal';
-    showPassPhone(0);
-}
+        GameState.currentPlayerIndex = 0;
+        GameState.hints = [];
+        GameState.votes = {};
+        GameState.votingComplete = false;
+        GameState.allPlayersRevealed = false;
+        currentVotingPlayer = 0;
 
-function backToMenu() {
-    AudioSystem.play('click');
-    clearInterval(GameState.timerInterval);
-    GameState.currentRound = 1;
-    currentVotingPlayer = 0;
-    showScreen('main-menu');
-}
+        // New word and spy
+        chooseWord();
+        GameState.spyIndex = Math.floor(Math.random() * GameState.playerCount);
+        GameState.players[GameState.spyIndex].isSpy = true;
 
-// ===== Leaderboard =====
-function renderLeaderboard() {
-    const podium = document.getElementById('leaderboard-podium');
-    const list = document.getElementById('leaderboard-list');
+        GameState.phase = 'reveal';
+        showPassPhone(0);
+    }
 
-    const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
+    function backToMenu() {
+        AudioSystem.play('click');
+        clearInterval(GameState.timerInterval);
+        GameState.currentRound = 1;
+        currentVotingPlayer = 0;
+        showScreen('main-menu');
+    }
 
-    // Podium (top 3)
-    podium.innerHTML = '';
-    const podiumOrder = [1, 0, 2]; // Silver, Gold, Bronze display order
+    // ===== Leaderboard =====
+    function renderLeaderboard() {
+        const podium = document.getElementById('leaderboard-podium');
+        const list = document.getElementById('leaderboard-list');
 
-    podiumOrder.forEach(rank => {
-        if (sorted[rank]) {
-            const player = sorted[rank];
-            const heights = [120, 90, 60];
-            const medals = ['🥇', '🥈', '🥉'];
+        const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
 
-            const item = document.createElement('div');
-            item.className = 'podium-item';
-            item.innerHTML = `
+        // Render Awards
+        renderAwards();
+
+        // Podium (top 3)
+        podium.innerHTML = '';
+        const podiumOrder = [1, 0, 2]; // Silver, Gold, Bronze display order
+
+        podiumOrder.forEach(rank => {
+            if (sorted[rank]) {
+                const player = sorted[rank];
+                const heights = [120, 90, 60];
+                const medals = ['🥇', '🥈', '🥉'];
+
+                const item = document.createElement('div');
+                item.className = 'podium-item';
+                item.innerHTML = `
                 <span class="podium-avatar" style="font-size:2.5rem;">${player.avatar}</span>
                 <span class="podium-name">${player.name}</span>
                 <span class="podium-score">${player.score} نقطة</span>
                 <div class="podium-bar" style="height:${heights[rank]}px">${medals[rank]}</div>
             `;
-            podium.appendChild(item);
-        }
-    });
+                podium.appendChild(item);
+            }
+        });
 
-    // Full list
-    list.innerHTML = '';
-    sorted.forEach((player, i) => {
-        const item = document.createElement('div');
-        item.className = 'leaderboard-item';
-        item.innerHTML = `
+        // Full list
+        list.innerHTML = '';
+        sorted.forEach((player, i) => {
+            const item = document.createElement('div');
+            item.className = 'leaderboard-item';
+            item.innerHTML = `
             <span class="leaderboard-rank">${i + 1}</span>
             <span style="font-size:1.3rem;">${player.avatar}</span>
             <span class="leaderboard-name">${player.name}</span>
             <span class="leaderboard-points">${player.score} نقطة</span>
         `;
-        list.appendChild(item);
-    });
+            list.appendChild(item);
+        });
 
-    // Confetti for winner
-    launchConfetti();
-}
+        launchConfetti();
+    }
 
-// ===== Room System =====
-function generateRoomCode() {
-    const code = Math.floor(10000 + Math.random() * 90000).toString();
-    document.getElementById('room-code').textContent = code;
-}
+    function renderAwards() {
+        const stats = GameState.sessionStats;
+        if (!stats || Object.keys(stats).length === 0) return;
 
-function copyRoomCode() {
-    const code = document.getElementById('room-code').textContent;
-    navigator.clipboard.writeText(code).then(() => {
-        showToast('📋 تم نسخ الرمز!');
-    }).catch(() => {
-        showToast('📋 الرمز: ' + code);
-    });
-}
+        // Find winners for categories
+        let maxInnocentVotes = -1;
+        let victimName = null;
 
-// ===== Code Input System =====
-function initCodeInputs() {
-    const inputs = document.querySelectorAll('.code-input');
-    inputs.forEach((input, i) => {
-        input.addEventListener('input', (e) => {
-            if (e.target.value && i < inputs.length - 1) {
-                inputs[i + 1].focus();
+        let maxSpyWins = -1;
+        let mastermindName = null;
+
+        let minVotes = 999;
+        let ghostName = null;
+
+        Object.entries(stats).forEach(([name, s]) => {
+            // Scapegoat: Most votes received as innocent
+            if (s.votesReceivedAsInnocent > maxInnocentVotes && s.votesReceivedAsInnocent > 0) {
+                maxInnocentVotes = s.votesReceivedAsInnocent;
+                victimName = name;
+            }
+
+            // Mastermind: Most spy wins
+            if (s.spyWins > maxSpyWins && s.spyWins > 0) {
+                maxSpyWins = s.spyWins;
+                mastermindName = name;
+            }
+
+            // Ghost: Least total votes (must have played)
+            if (s.totalVotesReceived < minVotes) {
+                minVotes = s.totalVotesReceived;
+                ghostName = name;
             }
         });
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Backspace' && !e.target.value && i > 0) {
-                inputs[i - 1].focus();
-            }
+
+        // Build HTML
+        const container = document.getElementById('leaderboard-podium');
+        // We will inject awards BEFORE the podium or AFTER? 
+        // Let's create a dedicated section inside leaderboard-content
+
+        let awardsHTML = '<div class="awards-container" style="display:flex;justify-content:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">';
+
+        if (victimName) {
+            awardsHTML += `
+            <div class="award-card" style="background:rgba(255,107,107,0.2);padding:10px;border-radius:10px;text-align:center;border:1px solid #FF6B6B;">
+                <div style="font-size:2rem;">🥺</div>
+                <div style="font-weight:bold;font-size:0.9rem;">البريء المظلوم</div>
+                <div style="font-size:0.8rem;">${victimName}</div>
+            </div>`;
+        }
+        if (mastermindName) {
+            awardsHTML += `
+            <div class="award-card" style="background:rgba(108,92,231,0.2);padding:10px;border-radius:10px;text-align:center;border:1px solid #6C5CE7;">
+                <div style="font-size:2rem;">😈</div>
+                <div style="font-weight:bold;font-size:0.9rem;">الداهية</div>
+                <div style="font-size:0.8rem;">${mastermindName}</div>
+            </div>`;
+        }
+        if (ghostName && minVotes === 0) {
+            awardsHTML += `
+            <div class="award-card" style="background:rgba(178,190,195,0.2);padding:10px;border-radius:10px;text-align:center;border:1px solid #b2bec3;">
+                <div style="font-size:2rem;">👻</div>
+                <div style="font-weight:bold;font-size:0.9rem;">الشبح</div>
+                <div style="font-size:0.8rem;">${ghostName}</div>
+            </div>`;
+        }
+
+        awardsHTML += '</div>';
+
+        // Insert before podium
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = awardsHTML;
+
+        // Clear previous awards if we are re-rendering?
+        // Actually renderLeaderboard clears podium.innerHTML.
+        // So we can append awards to podium first, or insert them separately.
+        // Let's append to podium container but styled differently?
+        // A separate container is better.
+
+        // Check if we already added an awards container
+        const existing = document.querySelector('.awards-container');
+        if (existing) existing.remove();
+
+        container.parentNode.insertBefore(tempDiv.firstChild, container);
+    }
+
+    // ===== Room System =====
+    function generateRoomCode() {
+        const code = Math.floor(10000 + Math.random() * 90000).toString();
+        document.getElementById('room-code').textContent = code;
+    }
+
+    function copyRoomCode() {
+        const code = document.getElementById('room-code').textContent;
+        navigator.clipboard.writeText(code).then(() => {
+            showToast('📋 تم نسخ الرمز!');
+        }).catch(() => {
+            showToast('📋 الرمز: ' + code);
         });
-    });
-}
-
-// ===== Settings =====
-function toggleSound() {
-    GameState.soundEnabled = document.getElementById('sound-toggle').checked;
-    if (GameState.soundEnabled) AudioSystem.play('click');
-}
-
-function toggleDarkMode() {
-    // Currently only dark mode, but can expand
-    const enabled = document.getElementById('dark-mode-toggle').checked;
-    if (!enabled) {
-        document.body.style.background = 'linear-gradient(135deg, #f0f0f5 0%, #e0e0e8 100%)';
-        showToast('🌞 الوضع الفاتح (تجريبي)');
-    } else {
-        document.body.style.background = '';
-        showToast('🌙 الوضع الداكن');
     }
-}
 
-function toggleVibration() {
-    GameState.vibrationEnabled = document.getElementById('vibration-toggle').checked;
-}
-
-function resetScores() {
-    if (confirm('هل أنت متأكد من مسح جميع النقاط؟')) {
-        GameState.leaderboard = {};
-        localStorage.removeItem('leaderboard');
-        GameState.players.forEach(p => p.score = 0);
-        showToast('🗑️ تم مسح النقاط');
+    // ===== Code Input System =====
+    function initCodeInputs() {
+        const inputs = document.querySelectorAll('.code-input');
+        inputs.forEach((input, i) => {
+            input.addEventListener('input', (e) => {
+                if (e.target.value && i < inputs.length - 1) {
+                    inputs[i + 1].focus();
+                }
+            });
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Backspace' && !e.target.value && i > 0) {
+                    inputs[i - 1].focus();
+                }
+            });
+        });
     }
-}
 
-// ===== Custom Words =====
-function loadCustomWords() {
-    renderCustomWords();
-}
+    // ===== Settings =====
+    function toggleSound() {
+        GameState.soundEnabled = document.getElementById('sound-toggle').checked;
+        if (GameState.soundEnabled) AudioSystem.play('click');
+    }
 
-function addCustomWord() {
-    const input = document.getElementById('custom-word-input');
-    const word = input.value.trim();
-    if (word && !GameState.customWords.includes(word)) {
-        GameState.customWords.push(word);
-        localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
-        input.value = '';
+    function toggleDarkMode() {
+        // Currently only dark mode, but can expand
+        const enabled = document.getElementById('dark-mode-toggle').checked;
+        if (!enabled) {
+            document.body.style.background = 'linear-gradient(135deg, #f0f0f5 0%, #e0e0e8 100%)';
+            showToast('🌞 الوضع الفاتح (تجريبي)');
+        } else {
+            document.body.style.background = '';
+            showToast('🌙 الوضع الداكن');
+        }
+    }
+
+    function toggleVibration() {
+        GameState.vibrationEnabled = document.getElementById('vibration-toggle').checked;
+    }
+
+    function resetScores() {
+        if (confirm('هل أنت متأكد من مسح جميع النقاط؟')) {
+            GameState.leaderboard = {};
+            localStorage.removeItem('leaderboard');
+            GameState.players.forEach(p => p.score = 0);
+            showToast('🗑️ تم مسح النقاط');
+        }
+    }
+
+    // ===== Custom Words =====
+    function loadCustomWords() {
         renderCustomWords();
-        AudioSystem.play('click');
-        showToast(`✅ تمت إضافة "${word}"`);
     }
-}
 
-function removeCustomWord(word) {
-    GameState.customWords = GameState.customWords.filter(w => w !== word);
-    localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
-    renderCustomWords();
-}
+    function addCustomWord() {
+        const input = document.getElementById('custom-word-input');
+        const word = input.value.trim();
+        if (word && !GameState.customWords.includes(word)) {
+            GameState.customWords.push(word);
+            localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
+            input.value = '';
+            renderCustomWords();
+            AudioSystem.play('click');
+            showToast(`✅ تمت إضافة "${word}"`);
+        }
+    }
 
-function renderCustomWords() {
-    const list = document.getElementById('custom-words-list');
-    list.innerHTML = '';
-    GameState.customWords.forEach(word => {
-        const tag = document.createElement('div');
-        tag.className = 'custom-word-tag';
-        tag.innerHTML = `
+    function removeCustomWord(word) {
+        GameState.customWords = GameState.customWords.filter(w => w !== word);
+        localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
+        renderCustomWords();
+    }
+
+    function renderCustomWords() {
+        const list = document.getElementById('custom-words-list');
+        list.innerHTML = '';
+        GameState.customWords.forEach(word => {
+            const tag = document.createElement('div');
+            tag.className = 'custom-word-tag';
+            tag.innerHTML = `
             <span>${word}</span>
             <button onclick="removeCustomWord('${word}')">✕</button>
         `;
-        list.appendChild(tag);
-    });
-}
-
-// ===== Utility Functions =====
-function showToast(message) {
-    let toast = document.querySelector('.toast');
-    if (!toast) {
-        toast = document.createElement('div');
-        toast.className = 'toast';
-        document.body.appendChild(toast);
+            list.appendChild(tag);
+        });
     }
-    toast.textContent = message;
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 2500);
-}
 
-function launchConfetti() {
-    const container = document.createElement('div');
-    container.className = 'confetti-container';
-    document.body.appendChild(container);
+    // ===== Utility Functions =====
+    function showToast(message) {
+        let toast = document.querySelector('.toast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.className = 'toast';
+            document.body.appendChild(toast);
+        }
+        toast.textContent = message;
+        toast.classList.add('show');
+        setTimeout(() => toast.classList.remove('show'), 2500);
+    }
 
-    const colors = ['#6C5CE7', '#FF6B6B', '#00D2D3', '#FECA57', '#55EFC4', '#FFA07A', '#A29BFE'];
+    function launchConfetti() {
+        const container = document.createElement('div');
+        container.className = 'confetti-container';
+        document.body.appendChild(container);
 
-    for (let i = 0; i < 50; i++) {
-        const piece = document.createElement('div');
-        piece.className = 'confetti-piece';
-        piece.style.left = Math.random() * 100 + '%';
-        piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-        piece.style.animationDelay = Math.random() * 2 + 's';
-        piece.style.animationDuration = (2 + Math.random() * 2) + 's';
+        const colors = ['#6C5CE7', '#FF6B6B', '#00D2D3', '#FECA57', '#55EFC4', '#FFA07A', '#A29BFE'];
 
-        // Random shapes
-        if (Math.random() > 0.5) {
-            piece.style.borderRadius = '50%';
-        } else {
-            piece.style.width = '8px';
-            piece.style.height = '14px';
+        for (let i = 0; i < 50; i++) {
+            const piece = document.createElement('div');
+            piece.className = 'confetti-piece';
+            piece.style.left = Math.random() * 100 + '%';
+            piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+            piece.style.animationDelay = Math.random() * 2 + 's';
+            piece.style.animationDuration = (2 + Math.random() * 2) + 's';
+
+            // Random shapes
+            if (Math.random() > 0.5) {
+                piece.style.borderRadius = '50%';
+            } else {
+                piece.style.width = '8px';
+                piece.style.height = '14px';
+            }
+
+            container.appendChild(piece);
         }
 
-        container.appendChild(piece);
+        setTimeout(() => container.remove(), 5000);
     }
 
-    setTimeout(() => container.remove(), 5000);
-}
-
-// ===== Keyboard shortcuts =====
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-        const activeScreen = document.querySelector('.screen.active');
-        if (activeScreen) {
-            if (activeScreen.id === 'hint-screen') {
-                submitHint();
-            } else if (activeScreen.id === 'pass-phone-screen') {
-                showRole();
+    // ===== Keyboard shortcuts =====
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            const activeScreen = document.querySelector('.screen.active');
+            if (activeScreen) {
+                if (activeScreen.id === 'hint-screen') {
+                    submitHint();
+                } else if (activeScreen.id === 'pass-phone-screen') {
+                    showRole();
+                }
             }
         }
-    }
-});
+    });
 
-// Prevent zoom on double tap (mobile)
-document.addEventListener('touchstart', (e) => {
-    if (e.touches.length > 1) {
-        e.preventDefault();
-    }
-}, { passive: false });
+    // Prevent zoom on double tap (mobile)
+    document.addEventListener('touchstart', (e) => {
+        if (e.touches.length > 1) {
+            e.preventDefault();
+        }
+    }, { passive: false });
 
-let lastTouchEnd = 0;
-document.addEventListener('touchend', (e) => {
-    const now = Date.now();
-    if (now - lastTouchEnd <= 300) {
-        e.preventDefault();
-    }
-    lastTouchEnd = now;
-}, false);
+    let lastTouchEnd = 0;
+    document.addEventListener('touchend', (e) => {
+        const now = Date.now();
+        if (now - lastTouchEnd <= 300) {
+            e.preventDefault();
+        }
+        lastTouchEnd = now;
+    }, false);
