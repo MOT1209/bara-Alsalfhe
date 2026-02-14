@@ -73,6 +73,14 @@ const WORDS = {
     random: ['مدرسة', 'مستشفى', 'مطار', 'مسجد', 'ملعب', 'شاطئ', 'جبل', 'صحراء', 'بحر', 'جزيرة', 'قمر', 'كرة قدم', 'شطرنج', 'يوتيوب', 'واتساب', 'حفلة', 'عرس', 'عيد', 'رمضان', 'قوس قزح'],
 };
 
+const ATTRIBUTE_QUESTIONS = [
+    'ما هو لونه؟', 'كم حجمه تقريباً؟', 'أين تجده عادة؟', 'من يستخدمه؟', 'ما هي فائدته الأساسية؟',
+    'هل هو غالي الثمن؟', 'ما هي مادته (خشب، حديد...)؟', 'متى نستخدمه؟', 'هل تحبه؟ ولماذا؟',
+    'أين يوضع في البيت؟', 'هل له صوت؟ وكيف صوته؟', 'هل هو خطير؟', 'كم عمره الافتراضي؟',
+    'هل هو ثقيل أم خفيف؟', 'كيف رائحته؟', 'هل يعمل بالكهرباء؟', 'هل يحتاج صيانة؟',
+    'ماذا تفعل به؟', 'هل يمكن شراؤه من السوبرماركت؟', 'هل هو للأطفال أم للكبار؟',
+];
+
 function getRandomWord(category) {
     let pool = [];
     if (category === 'random') {
@@ -186,13 +194,14 @@ io.on('connection', (socket) => {
         const player = room.players.find(p => p.id === socket.id);
         if (!player) return;
 
-        gs.hints.push({ playerName: player.name, avatar: player.avatar, text: hint });
+        gs.hints.push({ playerName: player.name, avatar: player.avatar, text: hint, question: player.currentQuestion });
         gs.hintsReceived++;
 
         io.to(code).emit('hint-submitted', {
             playerName: player.name,
             avatar: player.avatar,
             hint,
+            question: player.currentQuestion,
             total: gs.hintsReceived,
             needed: room.players.length
         });
@@ -319,11 +328,32 @@ function startOnlineRound(room) {
         });
     });
 
+    // If mode is questions, assign questions now
+    if (room.settings.mode === 'questions') {
+        room.players.forEach(p => {
+            p.currentQuestion = ATTRIBUTE_QUESTIONS[Math.floor(Math.random() * ATTRIBUTE_QUESTIONS.length)];
+        });
+    } else {
+        room.players.forEach(p => p.currentQuestion = null);
+    }
+
     // After a delay, move to hints phase
     setTimeout(() => {
         if (room.gameState) {
             room.gameState.phase = 'hints';
-            io.to(room.code).emit('phase-change', { phase: 'hints' });
+
+            // Send questions data if in questions mode
+            const questionsMap = {};
+            if (room.settings.mode === 'questions') {
+                room.players.forEach(p => {
+                    questionsMap[p.id] = p.currentQuestion;
+                });
+            }
+
+            io.to(room.code).emit('phase-change', {
+                phase: 'hints',
+                questions: questionsMap
+            });
         }
     }, (room.settings.turnTime + 3) * 1000);
 }

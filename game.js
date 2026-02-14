@@ -953,6 +953,7 @@ function nextRound() {
         p.isSpy = false;
         p.hint = '';
         p.voted = null;
+        p.currentQuestion = null;
     });
 
     GameState.currentPlayerIndex = 0;
