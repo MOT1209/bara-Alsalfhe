@@ -252,7 +252,7 @@ const AudioSystem = {
     // Text-to-Speech
     speak(text) {
         if (!GameState.soundEnabled || !window.speechSynthesis) return;
-        
+
         // Cancel any current speech
         window.speechSynthesis.cancel();
 
@@ -911,376 +911,377 @@ function updateSessionStats(spyCaught, spyGuessedCorrectly) {
             GameState.sessionStats[spy.name].spyWins++;
         }
     }
+}
 
-    function renderScores() {
-        const scoresList = document.getElementById('scores-list');
-        scoresList.innerHTML = '';
+function renderScores() {
+    const scoresList = document.getElementById('scores-list');
+    scoresList.innerHTML = '';
 
-        const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
-        sorted.forEach((player, i) => {
-            const item = document.createElement('div');
-            item.className = 'score-item';
-            item.style.animationDelay = `${i * 0.1}s`;
+    const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
+    sorted.forEach((player, i) => {
+        const item = document.createElement('div');
+        item.className = 'score-item';
+        item.style.animationDelay = `${i * 0.1}s`;
 
-            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
-            const spyBadge = player.isSpy ? ' 🕵️' : '';
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        const spyBadge = player.isSpy ? ' 🕵️' : '';
 
-            item.innerHTML = `
+        item.innerHTML = `
             <span style="font-size:1.3rem;min-width:30px;text-align:center;">${medal}</span>
             <span class="score-name">${player.avatar} ${player.name}${spyBadge}</span>
             <span class="score-points">${player.score}</span>
         `;
-            scoresList.appendChild(item);
-        });
+        scoresList.appendChild(item);
+    });
+}
+
+// ===== Next Round / End Game =====
+function nextRound() {
+    AudioSystem.play('click');
+
+    if (GameState.currentRound >= GameState.totalRounds) {
+        // Show final leaderboard
+        renderLeaderboard();
+        showScreen('leaderboard-screen');
+        return;
     }
 
-    // ===== Next Round / End Game =====
-    function nextRound() {
-        AudioSystem.play('click');
+    GameState.currentRound++;
 
-        if (GameState.currentRound >= GameState.totalRounds) {
-            // Show final leaderboard
-            renderLeaderboard();
-            showScreen('leaderboard-screen');
-            return;
-        }
+    // Reset for new round
+    GameState.players.forEach(p => {
+        p.isSpy = false;
+        p.hint = '';
+        p.voted = null;
+    });
 
-        GameState.currentRound++;
+    GameState.currentPlayerIndex = 0;
+    GameState.hints = [];
+    GameState.votes = {};
+    GameState.votingComplete = false;
+    GameState.allPlayersRevealed = false;
+    currentVotingPlayer = 0;
 
-        // Reset for new round
-        GameState.players.forEach(p => {
-            p.isSpy = false;
-            p.hint = '';
-            p.voted = null;
-        });
+    // New word and spy
+    chooseWord();
+    GameState.spyIndex = Math.floor(Math.random() * GameState.playerCount);
+    GameState.players[GameState.spyIndex].isSpy = true;
 
-        GameState.currentPlayerIndex = 0;
-        GameState.hints = [];
-        GameState.votes = {};
-        GameState.votingComplete = false;
-        GameState.allPlayersRevealed = false;
-        currentVotingPlayer = 0;
+    GameState.phase = 'reveal';
+    showPassPhone(0);
+}
 
-        // New word and spy
-        chooseWord();
-        GameState.spyIndex = Math.floor(Math.random() * GameState.playerCount);
-        GameState.players[GameState.spyIndex].isSpy = true;
+function backToMenu() {
+    AudioSystem.play('click');
+    clearInterval(GameState.timerInterval);
+    GameState.currentRound = 1;
+    currentVotingPlayer = 0;
+    showScreen('main-menu');
+}
 
-        GameState.phase = 'reveal';
-        showPassPhone(0);
-    }
+// ===== Leaderboard =====
+function renderLeaderboard() {
+    const podium = document.getElementById('leaderboard-podium');
+    const list = document.getElementById('leaderboard-list');
 
-    function backToMenu() {
-        AudioSystem.play('click');
-        clearInterval(GameState.timerInterval);
-        GameState.currentRound = 1;
-        currentVotingPlayer = 0;
-        showScreen('main-menu');
-    }
+    const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
 
-    // ===== Leaderboard =====
-    function renderLeaderboard() {
-        const podium = document.getElementById('leaderboard-podium');
-        const list = document.getElementById('leaderboard-list');
+    // Render Awards
+    renderAwards();
 
-        const sorted = [...GameState.players].sort((a, b) => b.score - a.score);
+    // Podium (top 3)
+    podium.innerHTML = '';
+    const podiumOrder = [1, 0, 2]; // Silver, Gold, Bronze display order
 
-        // Render Awards
-        renderAwards();
+    podiumOrder.forEach(rank => {
+        if (sorted[rank]) {
+            const player = sorted[rank];
+            const heights = [120, 90, 60];
+            const medals = ['🥇', '🥈', '🥉'];
 
-        // Podium (top 3)
-        podium.innerHTML = '';
-        const podiumOrder = [1, 0, 2]; // Silver, Gold, Bronze display order
-
-        podiumOrder.forEach(rank => {
-            if (sorted[rank]) {
-                const player = sorted[rank];
-                const heights = [120, 90, 60];
-                const medals = ['🥇', '🥈', '🥉'];
-
-                const item = document.createElement('div');
-                item.className = 'podium-item';
-                item.innerHTML = `
+            const item = document.createElement('div');
+            item.className = 'podium-item';
+            item.innerHTML = `
                 <span class="podium-avatar" style="font-size:2.5rem;">${player.avatar}</span>
                 <span class="podium-name">${player.name}</span>
                 <span class="podium-score">${player.score} نقطة</span>
                 <div class="podium-bar" style="height:${heights[rank]}px">${medals[rank]}</div>
             `;
-                podium.appendChild(item);
-            }
-        });
+            podium.appendChild(item);
+        }
+    });
 
-        // Full list
-        list.innerHTML = '';
-        sorted.forEach((player, i) => {
-            const item = document.createElement('div');
-            item.className = 'leaderboard-item';
-            item.innerHTML = `
+    // Full list
+    list.innerHTML = '';
+    sorted.forEach((player, i) => {
+        const item = document.createElement('div');
+        item.className = 'leaderboard-item';
+        item.innerHTML = `
             <span class="leaderboard-rank">${i + 1}</span>
             <span style="font-size:1.3rem;">${player.avatar}</span>
             <span class="leaderboard-name">${player.name}</span>
             <span class="leaderboard-points">${player.score} نقطة</span>
         `;
-            list.appendChild(item);
-        });
+        list.appendChild(item);
+    });
 
-        launchConfetti();
-    }
+    launchConfetti();
+}
 
-    function renderAwards() {
-        const stats = GameState.sessionStats;
-        if (!stats || Object.keys(stats).length === 0) return;
+function renderAwards() {
+    const stats = GameState.sessionStats;
+    if (!stats || Object.keys(stats).length === 0) return;
 
-        // Find winners for categories
-        let maxInnocentVotes = -1;
-        let victimName = null;
+    // Find winners for categories
+    let maxInnocentVotes = -1;
+    let victimName = null;
 
-        let maxSpyWins = -1;
-        let mastermindName = null;
+    let maxSpyWins = -1;
+    let mastermindName = null;
 
-        let minVotes = 999;
-        let ghostName = null;
+    let minVotes = 999;
+    let ghostName = null;
 
-        Object.entries(stats).forEach(([name, s]) => {
-            // Scapegoat: Most votes received as innocent
-            if (s.votesReceivedAsInnocent > maxInnocentVotes && s.votesReceivedAsInnocent > 0) {
-                maxInnocentVotes = s.votesReceivedAsInnocent;
-                victimName = name;
-            }
+    Object.entries(stats).forEach(([name, s]) => {
+        // Scapegoat: Most votes received as innocent
+        if (s.votesReceivedAsInnocent > maxInnocentVotes && s.votesReceivedAsInnocent > 0) {
+            maxInnocentVotes = s.votesReceivedAsInnocent;
+            victimName = name;
+        }
 
-            // Mastermind: Most spy wins
-            if (s.spyWins > maxSpyWins && s.spyWins > 0) {
-                maxSpyWins = s.spyWins;
-                mastermindName = name;
-            }
+        // Mastermind: Most spy wins
+        if (s.spyWins > maxSpyWins && s.spyWins > 0) {
+            maxSpyWins = s.spyWins;
+            mastermindName = name;
+        }
 
-            // Ghost: Least total votes (must have played)
-            if (s.totalVotesReceived < minVotes) {
-                minVotes = s.totalVotesReceived;
-                ghostName = name;
-            }
-        });
+        // Ghost: Least total votes (must have played)
+        if (s.totalVotesReceived < minVotes) {
+            minVotes = s.totalVotesReceived;
+            ghostName = name;
+        }
+    });
 
-        // Build HTML
-        const container = document.getElementById('leaderboard-podium');
-        // We will inject awards BEFORE the podium or AFTER? 
-        // Let's create a dedicated section inside leaderboard-content
+    // Build HTML
+    const container = document.getElementById('leaderboard-podium');
+    // We will inject awards BEFORE the podium or AFTER? 
+    // Let's create a dedicated section inside leaderboard-content
 
-        let awardsHTML = '<div class="awards-container" style="display:flex;justify-content:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">';
+    let awardsHTML = '<div class="awards-container" style="display:flex;justify-content:center;gap:10px;margin-bottom:20px;flex-wrap:wrap;">';
 
-        if (victimName) {
-            awardsHTML += `
+    if (victimName) {
+        awardsHTML += `
             <div class="award-card" style="background:rgba(255,107,107,0.2);padding:10px;border-radius:10px;text-align:center;border:1px solid #FF6B6B;">
                 <div style="font-size:2rem;">🥺</div>
                 <div style="font-weight:bold;font-size:0.9rem;">البريء المظلوم</div>
                 <div style="font-size:0.8rem;">${victimName}</div>
             </div>`;
-        }
-        if (mastermindName) {
-            awardsHTML += `
+    }
+    if (mastermindName) {
+        awardsHTML += `
             <div class="award-card" style="background:rgba(108,92,231,0.2);padding:10px;border-radius:10px;text-align:center;border:1px solid #6C5CE7;">
                 <div style="font-size:2rem;">😈</div>
                 <div style="font-weight:bold;font-size:0.9rem;">الداهية</div>
                 <div style="font-size:0.8rem;">${mastermindName}</div>
             </div>`;
-        }
-        if (ghostName && minVotes === 0) {
-            awardsHTML += `
+    }
+    if (ghostName && minVotes === 0) {
+        awardsHTML += `
             <div class="award-card" style="background:rgba(178,190,195,0.2);padding:10px;border-radius:10px;text-align:center;border:1px solid #b2bec3;">
                 <div style="font-size:2rem;">👻</div>
                 <div style="font-weight:bold;font-size:0.9rem;">الشبح</div>
                 <div style="font-size:0.8rem;">${ghostName}</div>
             </div>`;
-        }
-
-        awardsHTML += '</div>';
-
-        // Insert before podium
-        const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = awardsHTML;
-
-        // Clear previous awards if we are re-rendering?
-        // Actually renderLeaderboard clears podium.innerHTML.
-        // So we can append awards to podium first, or insert them separately.
-        // Let's append to podium container but styled differently?
-        // A separate container is better.
-
-        // Check if we already added an awards container
-        const existing = document.querySelector('.awards-container');
-        if (existing) existing.remove();
-
-        container.parentNode.insertBefore(tempDiv.firstChild, container);
     }
 
-    // ===== Room System =====
-    function generateRoomCode() {
-        const code = Math.floor(10000 + Math.random() * 90000).toString();
-        document.getElementById('room-code').textContent = code;
-    }
+    awardsHTML += '</div>';
 
-    function copyRoomCode() {
-        const code = document.getElementById('room-code').textContent;
-        navigator.clipboard.writeText(code).then(() => {
-            showToast('📋 تم نسخ الرمز!');
-        }).catch(() => {
-            showToast('📋 الرمز: ' + code);
+    // Insert before podium
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = awardsHTML;
+
+    // Clear previous awards if we are re-rendering?
+    // Actually renderLeaderboard clears podium.innerHTML.
+    // So we can append awards to podium first, or insert them separately.
+    // Let's append to podium container but styled differently?
+    // A separate container is better.
+
+    // Check if we already added an awards container
+    const existing = document.querySelector('.awards-container');
+    if (existing) existing.remove();
+
+    container.parentNode.insertBefore(tempDiv.firstChild, container);
+}
+
+// ===== Room System =====
+function generateRoomCode() {
+    const code = Math.floor(10000 + Math.random() * 90000).toString();
+    document.getElementById('room-code').textContent = code;
+}
+
+function copyRoomCode() {
+    const code = document.getElementById('room-code').textContent;
+    navigator.clipboard.writeText(code).then(() => {
+        showToast('📋 تم نسخ الرمز!');
+    }).catch(() => {
+        showToast('📋 الرمز: ' + code);
+    });
+}
+
+// ===== Code Input System =====
+function initCodeInputs() {
+    const inputs = document.querySelectorAll('.code-input');
+    inputs.forEach((input, i) => {
+        input.addEventListener('input', (e) => {
+            if (e.target.value && i < inputs.length - 1) {
+                inputs[i + 1].focus();
+            }
         });
-    }
-
-    // ===== Code Input System =====
-    function initCodeInputs() {
-        const inputs = document.querySelectorAll('.code-input');
-        inputs.forEach((input, i) => {
-            input.addEventListener('input', (e) => {
-                if (e.target.value && i < inputs.length - 1) {
-                    inputs[i + 1].focus();
-                }
-            });
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Backspace' && !e.target.value && i > 0) {
-                    inputs[i - 1].focus();
-                }
-            });
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' && !e.target.value && i > 0) {
+                inputs[i - 1].focus();
+            }
         });
-    }
+    });
+}
 
-    // ===== Settings =====
-    function toggleSound() {
-        GameState.soundEnabled = document.getElementById('sound-toggle').checked;
-        if (GameState.soundEnabled) AudioSystem.play('click');
-    }
+// ===== Settings =====
+function toggleSound() {
+    GameState.soundEnabled = document.getElementById('sound-toggle').checked;
+    if (GameState.soundEnabled) AudioSystem.play('click');
+}
 
-    function toggleDarkMode() {
-        // Currently only dark mode, but can expand
-        const enabled = document.getElementById('dark-mode-toggle').checked;
-        if (!enabled) {
-            document.body.style.background = 'linear-gradient(135deg, #f0f0f5 0%, #e0e0e8 100%)';
-            showToast('🌞 الوضع الفاتح (تجريبي)');
-        } else {
-            document.body.style.background = '';
-            showToast('🌙 الوضع الداكن');
-        }
+function toggleDarkMode() {
+    // Currently only dark mode, but can expand
+    const enabled = document.getElementById('dark-mode-toggle').checked;
+    if (!enabled) {
+        document.body.style.background = 'linear-gradient(135deg, #f0f0f5 0%, #e0e0e8 100%)';
+        showToast('🌞 الوضع الفاتح (تجريبي)');
+    } else {
+        document.body.style.background = '';
+        showToast('🌙 الوضع الداكن');
     }
+}
 
-    function toggleVibration() {
-        GameState.vibrationEnabled = document.getElementById('vibration-toggle').checked;
+function toggleVibration() {
+    GameState.vibrationEnabled = document.getElementById('vibration-toggle').checked;
+}
+
+function resetScores() {
+    if (confirm('هل أنت متأكد من مسح جميع النقاط؟')) {
+        GameState.leaderboard = {};
+        localStorage.removeItem('leaderboard');
+        GameState.players.forEach(p => p.score = 0);
+        showToast('🗑️ تم مسح النقاط');
     }
+}
 
-    function resetScores() {
-        if (confirm('هل أنت متأكد من مسح جميع النقاط؟')) {
-            GameState.leaderboard = {};
-            localStorage.removeItem('leaderboard');
-            GameState.players.forEach(p => p.score = 0);
-            showToast('🗑️ تم مسح النقاط');
-        }
-    }
+// ===== Custom Words =====
+function loadCustomWords() {
+    renderCustomWords();
+}
 
-    // ===== Custom Words =====
-    function loadCustomWords() {
-        renderCustomWords();
-    }
-
-    function addCustomWord() {
-        const input = document.getElementById('custom-word-input');
-        const word = input.value.trim();
-        if (word && !GameState.customWords.includes(word)) {
-            GameState.customWords.push(word);
-            localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
-            input.value = '';
-            renderCustomWords();
-            AudioSystem.play('click');
-            showToast(`✅ تمت إضافة "${word}"`);
-        }
-    }
-
-    function removeCustomWord(word) {
-        GameState.customWords = GameState.customWords.filter(w => w !== word);
+function addCustomWord() {
+    const input = document.getElementById('custom-word-input');
+    const word = input.value.trim();
+    if (word && !GameState.customWords.includes(word)) {
+        GameState.customWords.push(word);
         localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
+        input.value = '';
         renderCustomWords();
+        AudioSystem.play('click');
+        showToast(`✅ تمت إضافة "${word}"`);
     }
+}
 
-    function renderCustomWords() {
-        const list = document.getElementById('custom-words-list');
-        list.innerHTML = '';
-        GameState.customWords.forEach(word => {
-            const tag = document.createElement('div');
-            tag.className = 'custom-word-tag';
-            tag.innerHTML = `
+function removeCustomWord(word) {
+    GameState.customWords = GameState.customWords.filter(w => w !== word);
+    localStorage.setItem('customWords', JSON.stringify(GameState.customWords));
+    renderCustomWords();
+}
+
+function renderCustomWords() {
+    const list = document.getElementById('custom-words-list');
+    list.innerHTML = '';
+    GameState.customWords.forEach(word => {
+        const tag = document.createElement('div');
+        tag.className = 'custom-word-tag';
+        tag.innerHTML = `
             <span>${word}</span>
             <button onclick="removeCustomWord('${word}')">✕</button>
         `;
-            list.appendChild(tag);
-        });
-    }
-
-    // ===== Utility Functions =====
-    function showToast(message) {
-        let toast = document.querySelector('.toast');
-        if (!toast) {
-            toast = document.createElement('div');
-            toast.className = 'toast';
-            document.body.appendChild(toast);
-        }
-        toast.textContent = message;
-        toast.classList.add('show');
-        setTimeout(() => toast.classList.remove('show'), 2500);
-    }
-
-    function launchConfetti() {
-        const container = document.createElement('div');
-        container.className = 'confetti-container';
-        document.body.appendChild(container);
-
-        const colors = ['#6C5CE7', '#FF6B6B', '#00D2D3', '#FECA57', '#55EFC4', '#FFA07A', '#A29BFE'];
-
-        for (let i = 0; i < 50; i++) {
-            const piece = document.createElement('div');
-            piece.className = 'confetti-piece';
-            piece.style.left = Math.random() * 100 + '%';
-            piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
-            piece.style.animationDelay = Math.random() * 2 + 's';
-            piece.style.animationDuration = (2 + Math.random() * 2) + 's';
-
-            // Random shapes
-            if (Math.random() > 0.5) {
-                piece.style.borderRadius = '50%';
-            } else {
-                piece.style.width = '8px';
-                piece.style.height = '14px';
-            }
-
-            container.appendChild(piece);
-        }
-
-        setTimeout(() => container.remove(), 5000);
-    }
-
-    // ===== Keyboard shortcuts =====
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            const activeScreen = document.querySelector('.screen.active');
-            if (activeScreen) {
-                if (activeScreen.id === 'hint-screen') {
-                    submitHint();
-                } else if (activeScreen.id === 'pass-phone-screen') {
-                    showRole();
-                }
-            }
-        }
+        list.appendChild(tag);
     });
+}
 
-    // Prevent zoom on double tap (mobile)
-    document.addEventListener('touchstart', (e) => {
-        if (e.touches.length > 1) {
-            e.preventDefault();
-        }
-    }, { passive: false });
+// ===== Utility Functions =====
+function showToast(message) {
+    let toast = document.querySelector('.toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.className = 'toast';
+        document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 2500);
+}
 
-    let lastTouchEnd = 0;
-    document.addEventListener('touchend', (e) => {
-        const now = Date.now();
-        if (now - lastTouchEnd <= 300) {
-            e.preventDefault();
+function launchConfetti() {
+    const container = document.createElement('div');
+    container.className = 'confetti-container';
+    document.body.appendChild(container);
+
+    const colors = ['#6C5CE7', '#FF6B6B', '#00D2D3', '#FECA57', '#55EFC4', '#FFA07A', '#A29BFE'];
+
+    for (let i = 0; i < 50; i++) {
+        const piece = document.createElement('div');
+        piece.className = 'confetti-piece';
+        piece.style.left = Math.random() * 100 + '%';
+        piece.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+        piece.style.animationDelay = Math.random() * 2 + 's';
+        piece.style.animationDuration = (2 + Math.random() * 2) + 's';
+
+        // Random shapes
+        if (Math.random() > 0.5) {
+            piece.style.borderRadius = '50%';
+        } else {
+            piece.style.width = '8px';
+            piece.style.height = '14px';
         }
-        lastTouchEnd = now;
-    }, false);
+
+        container.appendChild(piece);
+    }
+
+    setTimeout(() => container.remove(), 5000);
+}
+
+// ===== Keyboard shortcuts =====
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        const activeScreen = document.querySelector('.screen.active');
+        if (activeScreen) {
+            if (activeScreen.id === 'hint-screen') {
+                submitHint();
+            } else if (activeScreen.id === 'pass-phone-screen') {
+                showRole();
+            }
+        }
+    }
+});
+
+// Prevent zoom on double tap (mobile)
+document.addEventListener('touchstart', (e) => {
+    if (e.touches.length > 1) {
+        e.preventDefault();
+    }
+}, { passive: false });
+
+let lastTouchEnd = 0;
+document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEnd <= 300) {
+        e.preventDefault();
+    }
+    lastTouchEnd = now;
+}, false);
