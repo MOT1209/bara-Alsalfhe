@@ -441,20 +441,25 @@ const OnlineGame = {
             input.disabled = false;
             input.value = '';
 
-            // Check if there's a question for me
+            // Check if there's a target for me to ask
             const myId = this.socket.id;
-            if (data.questions && data.questions[myId]) {
-                const question = data.questions[myId];
-                status.textContent = question;
-                input.placeholder = 'اكتب إجابتك هنا...';
-
+            const btn = document.getElementById('online-submit-hint-btn');
+            
+            if (data.targets && data.targets[myId]) {
+                const targetName = data.targets[myId];
+                status.textContent = `يا ${this.myName}.. اسأل ${targetName} سؤالاً!`;
+                input.style.display = 'none'; // Verbal mode
+                if (btn) btn.textContent = 'تم ✓';
+                
                 // TTS
                 setTimeout(() => {
-                    AudioSystem.speak(`يا ${this.myName}.. ${question}`);
+                    AudioSystem.speak(`${this.myName}.. اسأل ${targetName}`);
                 }, 600);
             } else {
                 status.textContent = 'اكتب تلميحك وأرسله';
+                input.style.display = 'block';
                 input.placeholder = 'اكتب تلميحك هنا...';
+                if (btn) btn.textContent = 'إرسال ✓';
             }
 
             this.hintSubmitted = false;
@@ -470,14 +475,11 @@ const OnlineGame = {
                 hintList.innerHTML = '';
                 data.hints.forEach(h => {
                     let textDisplay = h.text;
-                    if (h.question) {
-                        textDisplay = `<div style="font-size:0.8em;opacity:0.8;margin-bottom:4px;">${h.question}</div><div style="font-weight:bold;">${h.text}</div>`;
-                    }
 
                     hintList.innerHTML += `
                         <div class="hint-item">
                             <span class="hint-player">${h.avatar} ${h.playerName}</span>
-                            <span class="hint-text" style="flex-direction:column;align-items:flex-start;">${textDisplay}</span>
+                            <span class="hint-text">${textDisplay}</span>
                         </div>
                     `;
                 });
@@ -514,15 +516,10 @@ const OnlineGame = {
     onHintReceived(data) {
         const list = document.getElementById('online-hints-list');
 
-        let textDisplay = data.hint;
-        if (data.question) {
-            textDisplay = `<span style="font-weight:bold;display:block;font-size:0.9em;margin-bottom:2px;">${data.question}</span>${data.hint}`;
-        }
-
         list.innerHTML += `
             <div class="hint-item">
                 <span class="hint-player">${data.avatar} ${data.playerName}</span>
-                <span class="hint-text">${textDisplay}</span>
+                <span class="hint-text">${data.hint}</span>
             </div>
         `;
         document.getElementById('online-hint-status').textContent = `تلميحات: ${data.total}/${data.needed}`;

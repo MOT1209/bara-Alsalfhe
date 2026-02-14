@@ -194,14 +194,18 @@ io.on('connection', (socket) => {
         const player = room.players.find(p => p.id === socket.id);
         if (!player) return;
 
-        gs.hints.push({ playerName: player.name, avatar: player.avatar, text: hint, question: player.currentQuestion });
+        let hintText = hint;
+        if (room.settings.mode === 'questions') {
+            hintText = `سأل ${player.askedTarget || 'أحد اللاعبين'}`;
+        }
+
+        gs.hints.push({ playerName: player.name, avatar: player.avatar, text: hintText });
         gs.hintsReceived++;
 
         io.to(code).emit('hint-submitted', {
             playerName: player.name,
             avatar: player.avatar,
-            hint,
-            question: player.currentQuestion,
+            hint: hintText,
             total: gs.hintsReceived,
             needed: room.players.length
         });
@@ -328,13 +332,17 @@ function startOnlineRound(room) {
         });
     });
 
-    // If mode is questions, assign questions now
+    // If mode is questions, pick a target for each player to ask
     if (room.settings.mode === 'questions') {
-        room.players.forEach(p => {
-            p.currentQuestion = ATTRIBUTE_QUESTIONS[Math.floor(Math.random() * ATTRIBUTE_QUESTIONS.length)];
+        room.players.forEach((p, idx) => {
+            let targetIdx;
+            do {
+                targetIdx = Math.floor(Math.random() * room.players.length);
+            } while (targetIdx === idx);
+            p.askedTarget = room.players[targetIdx].name;
         });
     } else {
-        room.players.forEach(p => p.currentQuestion = null);
+        room.players.forEach(p => p.askedTarget = null);
     }
 
     // After a delay, move to hints phase
@@ -342,17 +350,17 @@ function startOnlineRound(room) {
         if (room.gameState) {
             room.gameState.phase = 'hints';
 
-            // Send questions data if in questions mode
-            const questionsMap = {};
+            // Send assigned targets if in questions mode
+            const targetsMap = {};
             if (room.settings.mode === 'questions') {
                 room.players.forEach(p => {
-                    questionsMap[p.id] = p.currentQuestion;
+                    targetsMap[p.id] = p.askedTarget;
                 });
             }
 
             io.to(room.code).emit('phase-change', {
                 phase: 'hints',
-                questions: questionsMap
+                targets: targetsMap
             });
         }
     }, (room.settings.turnTime + 3) * 1000);

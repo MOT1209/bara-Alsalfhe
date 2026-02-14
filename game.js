@@ -585,25 +585,32 @@ function showCurrentHintPlayer() {
     const instruction = document.getElementById('hint-instruction');
 
     if (GameState.mode === 'questions') {
-        // Pick a random attribute question
-        // Ensure we don't pick the same one twice in a row? (optional optimization)
-        const question = ATTRIBUTE_QUESTIONS[Math.floor(Math.random() * ATTRIBUTE_QUESTIONS.length)];
+        // Verbal Questioning: X asks Y
+        // Pick a target who isn't the current player
+        const sourceIndex = GameState.currentPlayerIndex;
+        let targetIndex;
+        do {
+            targetIndex = Math.floor(Math.random() * GameState.players.length);
+        } while (targetIndex === sourceIndex);
 
-        // Save the question in a temporary property so we can store it with the answer
-        player.currentQuestion = question;
+        const target = GameState.players[targetIndex];
+        player.askedTarget = target.name;
 
-        instruction.textContent = question; // Show question as instruction
-        input.placeholder = 'اكتب إجابتك هنا...';
+        instruction.textContent = `يا ${player.name}.. اسأل ${target.name} سؤالاً!`;
+        input.style.display = 'none'; // Hide input for verbal mode
+        document.getElementById('btn-submit-hint').textContent = 'تم (التالي) ✓';
+        input.placeholder = '';
 
-        // Speak the question
-        // Add a small delay for better UX
+        // Speak the task
         setTimeout(() => {
-            AudioSystem.speak(`يا ${player.name}.. ${question}`);
+            AudioSystem.speak(`${player.name}.. اسأل ${target.name}`);
         }, 600);
 
     } else {
         instruction.textContent = 'حان دورك لتقديم تلميح!';
+        input.style.display = 'block';
         input.placeholder = 'اكتب تلميحك هنا...';
+        document.getElementById('btn-submit-hint').textContent = 'إرسال ✓';
     }
 
     showScreen('hint-screen');
@@ -649,18 +656,20 @@ function submitHint() {
     AudioSystem.play('hint');
 
     const input = document.getElementById('hint-input');
-    const hintText = input.value.trim() || (GameState.mode === 'questions' ? 'لم يجب' : 'لم يلمّح');
     const player = GameState.players[GameState.currentPlayerIndex];
+    let hintText = input.value.trim();
+
+    if (GameState.mode === 'questions') {
+        hintText = `سأل ${player.askedTarget || 'أحد اللاعبين'}`;
+    } else {
+        hintText = hintText || 'لم يلمّح';
+    }
 
     const hintData = {
         playerName: player.name,
         avatar: player.avatar,
         text: hintText
     };
-
-    if (GameState.mode === 'questions' && player.currentQuestion) {
-        hintData.question = player.currentQuestion;
-    }
 
     GameState.hints.push(hintData);
 
