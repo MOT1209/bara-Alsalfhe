@@ -509,8 +509,12 @@ function startHintPhase() {
     const instruction = document.getElementById('hint-instruction');
 
     if (GameState.mode === 'questions') {
+        // Pick a random question for everyone this round? 
+        // Or pick a random question PER player?
+        // User request: "Questions about it like how tall..."
+        // Let's pick ONE question per player to keep it dynamic.
         title.textContent = 'دور الأسئلة ❓';
-        instruction.textContent = 'حان دورك لطرح سؤال!';
+        instruction.textContent = 'أجب على السؤال التالي:';
     } else {
         title.textContent = 'دور التلميحات 💡';
         instruction.textContent = 'حان دورك لتقديم تلميح!';
@@ -523,18 +527,29 @@ function startHintPhase() {
 function showCurrentHintPlayer() {
     const player = GameState.players[GameState.currentPlayerIndex];
     document.getElementById('current-hint-player').textContent = `${player.avatar} ${player.name}`;
-    document.getElementById('hint-input').value = '';
-    document.getElementById('hint-input').placeholder =
-        GameState.mode === 'questions' ? 'اكتب سؤالك هنا...' : 'اكتب تلميحك هنا...';
+    const input = document.getElementById('hint-input');
+    input.value = '';
 
-    // For questions mode, auto-fill a random question for non-spy players
-    if (GameState.mode === 'questions' && !player.isSpy) {
-        const randomQ = QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)];
-        document.getElementById('hint-input').placeholder = randomQ;
+    // Reset any previous question text if any (we might need a container for it)
+    const instruction = document.getElementById('hint-instruction');
+
+    if (GameState.mode === 'questions') {
+        // Pick a random attribute question
+        // Ensure we don't pick the same one twice in a row? (optional optimization)
+        const question = ATTRIBUTE_QUESTIONS[Math.floor(Math.random() * ATTRIBUTE_QUESTIONS.length)];
+
+        // Save the question in a temporary property so we can store it with the answer
+        player.currentQuestion = question;
+
+        instruction.textContent = question; // Show question as instruction
+        input.placeholder = 'اكتب إجابتك هنا...';
+    } else {
+        instruction.textContent = 'حان دورك لتقديم تلميح!';
+        input.placeholder = 'اكتب تلميحك هنا...';
     }
 
     showScreen('hint-screen');
-    document.getElementById('hint-input').focus();
+    input.focus();
 
     // Start turn timer
     startTurnTimer();
@@ -576,22 +591,34 @@ function submitHint() {
     AudioSystem.play('hint');
 
     const input = document.getElementById('hint-input');
-    const hintText = input.value.trim() || (GameState.mode === 'questions' ? 'لم يسأل' : 'لم يلمّح');
+    const hintText = input.value.trim() || (GameState.mode === 'questions' ? 'لم يجب' : 'لم يلمّح');
     const player = GameState.players[GameState.currentPlayerIndex];
 
-    GameState.hints.push({
+    const hintData = {
         playerName: player.name,
         avatar: player.avatar,
         text: hintText
-    });
+    };
+
+    if (GameState.mode === 'questions' && player.currentQuestion) {
+        hintData.question = player.currentQuestion;
+    }
+
+    GameState.hints.push(hintData);
 
     // Add to hints list display
     const hintsList = document.getElementById('hints-list');
     const hintItem = document.createElement('div');
     hintItem.className = 'hint-item';
+
+    let textDisplay = hintText;
+    if (hintData.question) {
+        textDisplay = `<span style="font-weight:bold;display:block;font-size:0.9em;margin-bottom:2px;">${hintData.question}</span>${hintText}`;
+    }
+
     hintItem.innerHTML = `
         <span class="hint-player">${player.avatar} ${player.name}</span>
-        <span class="hint-text">${hintText}</span>
+        <span class="hint-text">${textDisplay}</span>
     `;
     hintsList.appendChild(hintItem);
 
@@ -617,11 +644,21 @@ function startVotingPhase() {
 
     // Show all hints first
     let hintsHTML = '<div class="hints-review"><h3 style="text-align:center;margin-bottom:16px;">التلميحات 💡</h3>';
+
+    if (GameState.mode === 'questions') {
+        hintsHTML = '<div class="hints-review"><h3 style="text-align:center;margin-bottom:16px;">الإجابات 🗣️</h3>';
+    }
+
     GameState.hints.forEach(hint => {
+        let textDisplay = hint.text;
+        if (hint.question) {
+            textDisplay = `<div style="font-size:0.8em;opacity:0.8;margin-bottom:4px;">${hint.question}</div><div style="font-weight:bold;">${hint.text}</div>`;
+        }
+
         hintsHTML += `
             <div class="hint-item">
                 <span class="hint-player">${hint.avatar} ${hint.playerName}</span>
-                <span class="hint-text">${hint.text}</span>
+                <span class="hint-text" style="flex-direction:column;align-items:flex-start;">${textDisplay}</span>
             </div>
         `;
     });
