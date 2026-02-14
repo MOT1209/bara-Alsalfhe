@@ -480,6 +480,14 @@ function showPassPhone(playerIndex) {
     const player = GameState.players[playerIndex];
 
     document.getElementById('pass-player-name').textContent = player.name;
+
+    // Reset pass phone screen to defaults
+    document.querySelector('.pass-title').textContent = 'مرر الهاتف إلى';
+    document.querySelector('.pass-hint').textContent = 'تأكد أن لا أحد يرى الشاشة!';
+    const btn = document.getElementById('btn-show-role');
+    btn.innerHTML = '👁️ اضغط لرؤية دورك';
+    btn.onclick = showRole;
+
     AudioSystem.play('pass');
     showScreen('pass-phone-screen');
 }
@@ -705,16 +713,39 @@ function startVotingPhase() {
     GameState.phase = 'voting';
     GameState.votes = {};
     GameState.votingComplete = false;
+    currentVotingPlayer = 0;
 
+    showVotingPassPhone();
+}
+
+function showVotingPassPhone() {
+    const player = GameState.players[currentVotingPlayer];
+
+    document.getElementById('pass-player-name').textContent = player.name;
+    document.querySelector('.pass-title').textContent = 'حان وقت التصويت! مرر الهاتف إلى:';
+    document.querySelector('.pass-hint').textContent = 'لا تجعل أحداً يرى تصويتك 🤫';
+
+    const btn = document.getElementById('btn-show-role');
+    btn.innerHTML = '👁️ اضغط لبدء التصويت';
+    btn.onclick = () => renderVotingScreenForPlayer();
+
+    showScreen('pass-phone-screen');
+}
+
+function renderVotingScreenForPlayer() {
+    const voter = GameState.players[currentVotingPlayer];
     const votingPlayers = document.getElementById('voting-players');
     votingPlayers.innerHTML = '';
 
-    // Show all hints first
-    let hintsHTML = '<div class="hints-review"><h3 style="text-align:center;margin-bottom:16px;">التلميحات 💡</h3>';
+    // Set the specific question
+    const questionEl = document.querySelector('.voting-question');
+    questionEl.textContent = `يا ${voter.name}.. من هو المخفي في رأيك؟ 🕵️`;
 
-    if (GameState.mode === 'questions') {
-        hintsHTML = '<div class="hints-review"><h3 style="text-align:center;margin-bottom:16px;">الإجابات 🗣️</h3>';
-    }
+    // TTS
+    AudioSystem.speak(`يا ${voter.name}.. من هو المخفي؟`);
+
+    // Add hints review first
+    let hintsHTML = `<div class="hints-review"><h3 style="text-align:center;margin-bottom:16px;">${GameState.mode === 'questions' ? 'مراجعة الإجابات 🗣️' : 'مراجعة التلميحات 💡'}</h3>`;
 
     GameState.hints.forEach(hint => {
         let textDisplay = hint.text;
@@ -729,18 +760,22 @@ function startVotingPhase() {
             </div>
         `;
     });
-    hintsHTML += '</div><div style="margin:24px 0;text-align:center;"><h3>صوّت الآن! من هو المخفي؟ 🕵️</h3></div>';
+    hintsHTML += '</div><div style="margin:24px 0;text-align:center;"><h3>اختر اللاعب الذي تشك به:</h3></div>';
 
-    votingPlayers.innerHTML = hintsHTML;
+    const reviewDiv = document.createElement('div');
+    reviewDiv.innerHTML = hintsHTML;
+    votingPlayers.appendChild(reviewDiv);
 
-    // Add vote buttons for each player
+    // Add vote buttons for OTHER players
     GameState.players.forEach((player, index) => {
+        if (player.name === voter.name) return; // Skip self
+
         const btn = document.createElement('button');
         btn.className = 'vote-btn';
         btn.innerHTML = `
             <span class="vote-avatar">${player.avatar}</span>
             <span>${player.name}</span>
-            <span class="vote-count">0 أصوات</span>
+            <span class="vote-count" style="display:none;">0 أصوات</span>
         `;
         btn.addEventListener('click', () => castVote(index, btn));
         votingPlayers.appendChild(btn);
@@ -764,54 +799,72 @@ function castVote(votedForIndex, btn) {
     }
     GameState.votes[votedForIndex]++;
 
-    // Visual feedback
-    btn.classList.add('selected');
-    setTimeout(() => btn.classList.remove('selected'), 300);
-
     currentVotingPlayer++;
 
     if (currentVotingPlayer >= GameState.playerCount) {
         // All votes cast
-        GameState.votingComplete = true;
         revealVotes();
     } else {
-        showToast(`✅ تم التصويت! (${currentVotingPlayer}/${GameState.playerCount})`);
+        showVotingPassPhone();
     }
 }
 
 function revealVotes() {
-    // Show vote counts
-    const voteBtns = document.querySelectorAll('.vote-btn');
-    voteBtns.forEach((btn, index) => {
+    GameState.votingComplete = true;
+
+    // Switch to voting screen for reveal
+    showScreen('voting-screen');
+    document.querySelector('.voting-question').textContent = 'النتائج النهائية للتصويت 📊';
+
+    const votingPlayers = document.getElementById('voting-players');
+    votingPlayers.innerHTML = '';
+
+    // Show everyone's vote count in a summary list
+    GameState.players.forEach((player, index) => {
         const count = GameState.votes[index] || 0;
-        btn.querySelector('.vote-count').textContent = `${count} أصوات`;
-        btn.classList.add('revealed');
-        // Disable further voting
-        btn.style.pointerEvents = 'none';
+
+        const resultItem = document.createElement('div');
+        resultItem.style.cssText = "display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:15px; border-radius:12px; margin-bottom:10px; border:1px solid rgba(255,255,255,0.1);";
+
+        resultItem.innerHTML = `
+            <div style="display:flex; align-items:center; gap:12px;">
+                <span style="font-size:1.5rem;">${player.avatar}</span>
+                <span style="font-weight:bold; font-size:1.1rem;">${player.name}</span>
+            </div>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <span style="background:#6C5CE7; color:white; padding:4px 12px; border-radius:20px; font-size:0.9rem;">${count} أصوات</span>
+            </div>
+        `;
+        votingPlayers.appendChild(resultItem);
     });
 
-    // Find most voted player
+    // Find most voted (handling ties)
     let maxVotes = 0;
-    let mostVotedIndex = -1;
+    let ties = [];
     Object.entries(GameState.votes).forEach(([index, count]) => {
+        const idx = parseInt(index);
         if (count > maxVotes) {
             maxVotes = count;
-            mostVotedIndex = parseInt(index);
+            ties = [idx];
+        } else if (count === maxVotes && maxVotes > 0) {
+            ties.push(idx);
         }
     });
 
-    // Check if spy was caught
-    const spyCaught = mostVotedIndex === GameState.spyIndex;
+    const spyCaught = ties.includes(GameState.spyIndex);
 
     if (spyCaught) {
-        // Give spy a chance to guess the word
+        AudioSystem.play('reveal');
+        showToast('🎯 تم كشف المخفي!');
         setTimeout(() => {
             document.getElementById('spy-guess-section').classList.remove('hidden');
             document.getElementById('spy-guess-input').value = '';
             document.getElementById('spy-guess-input').focus();
+            AudioSystem.play('spy_reveal');
         }, 1500);
     } else {
-        // Spy wins - wasn't caught
+        AudioSystem.play('lose');
+        showToast('🕵️ المخفي نجا من التصويت!');
         setTimeout(() => showResults(false, false), 2000);
     }
 }
